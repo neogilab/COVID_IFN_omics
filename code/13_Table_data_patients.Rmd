@@ -1,0 +1,102 @@
+---
+title: "Analysis data"
+output: html_notebook
+---
+
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+```{r}
+library(ggpubr)
+```
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#489048","#bd7f7b","#7b98bd")
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical <- clinical[,c(2, 3, 4)]
+clinical <- clinical[complete.cases(clinical),]
+names(clinical) <- c("X", "cluster","condition")
+```
+
+## find data differing between condition
+```{r}
+data_met <- read.csv("processing/clean_data_met.csv", check.names = FALSE, row.names = 1)
+olink <- read.csv("processing/clean_data_olink.csv", row.names = 1)
+data_txn <- read.csv("processing/clean_data_transcriptomics.csv", row.names = 1)
+data_mfi <- read.csv("processing/clean_data_mfi.csv", row.names = 1)
+data_net <- read.csv("processing/clean_data_net.csv", row.names = 1)
+data_neopterin <- read.csv("processing/clean_data_neopterin.csv", row.names = 1)
+colnames(data_neopterin)[1] <- "Neopterin"
+data_auto <- read.csv("processing/clean_data_auto.csv", row.names = 1)
+```
+
+```{r}
+patients <- c(clinical$X, as.vector(rownames(data_met)), as.vector(rownames(olink)), as.vector(rownames(data_txn)), as.vector(rownames(data_mfi)), as.vector(rownames(data_neopterin)), as.vector(rownames(data_net)), as.vector(rownames(data_auto)))
+```
+
+```{r}
+table_patients <- data.frame(patients = unique(patients))
+table_patients$Txn <- ifelse(table_patients$patients %in% rownames(data_txn), 1, 0)
+table_patients$Met <- ifelse(table_patients$patients %in% rownames(data_met), 1, 0)
+table_patients$Olink <- ifelse(table_patients$patients %in% rownames(olink), 1, 0)
+table_patients$IFN_plasma <- ifelse(table_patients$patients %in% rownames(data_mfi), 1, 0)
+table_patients$Cell_mark <- ifelse(table_patients$patients %in% rownames(data_net), 1, 0)
+table_patients$Neopterin <- ifelse(table_patients$patients %in% rownames(data_neopterin), 1, 0)
+table_patients$Autoantibodies <- ifelse(table_patients$patients %in% rownames(data_auto), 1, 0)
+```
+
+```{r}
+library(circlize)
+library(ComplexHeatmap)
+col_fun_2 = colorRamp2(c(0, 1), c("white", "blue"))
+```
+
+
+
+```{r}
+names(clinical)[1] <- "patients"
+table_patients <- merge(clinical, table_patients, by = "patients", all.y = TRUE)
+```
+
+```{r}
+rownames(table_patients) <- table_patients$patients
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+table_patients <- table_patients[!is.na(table_patients$condition),]
+```
+
+```{r}
+table_patients <- table_patients[order(table_patients$cluster),]
+```
+
+```{r}
+pdf("results/figures/Heatmap_patients_data.pdf", width = 5, height = 12)
+ht = Heatmap(table_patients[,-c(1:3)], 
+             column_order = colnames(table_patients[,-c(1:3)]),  
+             row_order = rownames(table_patients[,-c(1:3)]),
+             col = col_fun_2, row_names_side = "left", column_names_side = "top", border = TRUE, rect_gp = gpar(col = "black", lwd = 2),
+             left_annotation = rowAnnotation(Group = table_patients$condition,
+                                             Cluster = table_patients$cluster,
+                                              col = list(Cluster = c("HC" = col_clusters[1], "Conv" = col_clusters[2], "LIS" = col_clusters[3], "HIS" = col_clusters[4], "MIS" = col_conditions[4]),
+                                                         Group = c("HC" = col_conditions[1], "Conv" = col_conditions[2], "Mild" = col_conditions[3], "Severe" = col_conditions[4])), show_legend = TRUE))
+draw(ht)
+dev.off()
+```

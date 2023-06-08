@@ -1,0 +1,40 @@
+---
+title: "Prepare cybersort mixture file"
+output: html_notebook
+---
+
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(xlsx)
+library(org.Hs.eg.db)
+```
+
+```{r}
+data_txn <- read.delim("data/omics/RawReadCount.txt", row.names = 1)
+data_txn$Gene_name <- mapIds(org.Hs.eg.db, rownames(data_txn), keytype="ENSEMBL", column="SYMBOL")
+data_txn <- data_txn[!is.na(data_txn$Gene_name),]
+data_txn <- data_txn[!duplicated(data_txn$Gene_name),]
+rownames(data_txn) <- data_txn$Gene_name
+write.table(data_txn, row.names = TRUE, quote = FALSE, "processing/cybersort_input_mixture.txt")
+```
+

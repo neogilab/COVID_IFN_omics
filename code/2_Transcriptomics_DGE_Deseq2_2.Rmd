@@ -1,0 +1,176 @@
+---
+title: "Covid transcriptomics"
+output: html_notebook
+---
+
+
+PCA, sample-sample correlation → determine outliers
+filtering interferon → heatmap with 3 columns on the side
+boxplots → IFN, IL29
+Correlation ISG with metabolomics, olink and scmetabolomics → in each group
+MOFA integration ?
+sankey plot ?
+severe patients → 2 clusters → cell profiling
+regression IFN / age
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(org.Hs.eg.db)
+```
+
+## load interferon
+```{r}
+antiviral <- read.delim("data/databases/IFN/antiviral_mechanism_IFN.tsv")
+antiviral <- gsub(".* ", "", antiviral$MoleculeName)
+inf_alpha_beta <- read.delim("data/databases/IFN/reactome_interferon_alpha_beta.tsv")
+inf_alpha_beta <- gsub(".* ", "", inf_alpha_beta$MoleculeName)
+inf_gamma <- read.delim("data/databases/IFN/reactome_interferon_gamma.tsv")
+inf_gamma <- gsub(".* ", "", inf_gamma$MoleculeName)
+inf_lambda <- c("IL29", "IL28A", "IL28B")
+```
+
+```{r}
+inf <- unique(c(antiviral, inf_alpha_beta, inf_gamma, inf_lambda))
+```
+
+## load autophagy
+```{r}
+autophagy <- read.delim("data/databases/autophagy/Autophagy_from_KEGG_2019_Human.gmt", header = FALSE)
+autophagy <- data.frame(t(autophagy))
+autophagy <- as.vector(autophagy$t.autophagy.[-c(1,2)])
+```
+
+## load clinical data
+```{r}
+id_file <- read.delim("data/clinical/MetaData.txt")
+id_file <- id_file[,c(1, 4)]
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical.csv")
+clinical <- clinical[,c(2, 39, 4, 5)]
+```
+
+## load data
+```{r}
+data <- read.delim("data/omics/RawReadCount.txt")
+rownames(data) <- data$Geneid
+data$Geneid <- NULL
+data <- data.frame(t(data))
+data$RNASeq <- rownames(data)
+
+data <- merge(id_file , data, by = "RNASeq")
+data$RNASeq <- NULL
+
+data <- merge(clinical, data, by = "KI_ID")
+rownames(data) <- data$KI_ID
+```
+
+
+```{r}
+countData <- data
+```
+
+```{r}
+coldata <- data.frame(samples = rownames(countData), condition = countData$condition, age = countData$Age..as.of.2020., gender = countData$Gender)
+coldata$condition <- as.vector(coldata$condition)
+coldata$condition[is.na(coldata$condition)] <- "Other"
+coldata$condition <- factor(coldata$condition)
+coldata$condition <- relevel(coldata$condition, ref = "HC")
+```
+
+
+## Create Deseq2 object
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = round(t(countData[,-c(1:4)])), colData = coldata, design = ~ condition)
+dds$genes$Symbol <- mapIds(org.Hs.eg.db, rownames(dds), keytype="ENSEMBL", column="SYMBOL")
+dim(dds)
+dds <- dds[!is.na(dds$genes$Symbol), ]
+dim(dds)
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+dds <- estimateSizeFactors(dds)
+vsd <- assay(varianceStabilizingTransformation(dds,  blind = TRUE, fitType = "parametric"))
+colnames(vsd) <- dds$samples
+write.csv(t(vsd), "processing/COVID_transcriptomics_vsd_data_deseq2.csv")
+```
+
+library("vsd")
+vsn::meanSdPlot(vsd)
+sampleDists <- dist(t(vsd))
+library("RColorBrewer")
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(dds$condition)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+library(pheatmap)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+list_comp <- c("HC", "Conv", "Mild", "Severe")
+list_pair <- t(combn(list_comp,2))
+```
+
+```{r}
+unique_genes <- unique(dds$genes)
+```
+
+```{r}
+total_res <- data.frame(Gene_name = unique_genes[[1]][!is.na(unique_genes[[1]]) & !duplicated(unique_genes[[1]])])
+
+
+for (i in 1:nrow(list_pair)) {
+  c2 <- list_pair[i,1]
+  c1 <- list_pair[i,2]
+  print(c(c1, c2))
+  res <- results(dds, contrast=c("condition", c1, c2), cooksCutoff=FALSE, independentFiltering=FALSE)
+  res <- as.data.frame(res)
+  res$Ensembl_ID <- rownames(res)
+  res <- res[rowSums(is.na(res)) != ncol(res), ]
+  res <- res[!duplicated(res$Ensembl_ID),]
+  res$Gene_name <- mapIds(org.Hs.eg.db, rownames(res), keytype="ENSEMBL", column="SYMBOL")
+  res <- res[!is.na(res$Gene_name),]
+  res <- res[!duplicated(res$Gene_name),]
+  names(res)[c(2,6)] <- c(paste0("LFC_", c1, "_", c2), paste0("FDR_", c1, "_", c2))
+  write.csv(res, file=paste0("results/Deseq2/M1_results_DGE_", c1, "_", c2,".csv"))
+  res_2 <- res[,c(8, 2, 5)]
+  write.csv(res_2, file=paste0("results/piano/M1_results_DGE_piano_input", c1, "_", c2,".csv"))
+  res <- res[res[,6] < 0.05,]
+  res <- res[res[,2] < -1 | res[,2] > 1,]
+  print(nrow(res))
+  write.csv(res, file=paste0("results/Deseq2/M1_results_DGE_", c1, "_", c2,"_filt.csv"))
+  print(nrow(res))
+  res <- res[,c(8, 2, 6)]
+  print(names(res))
+  print(names(total_res))
+  total_res <- merge(total_res, res, by = "Gene_name", all.x = TRUE, all.y = TRUE)
+}
+
+rownames(total_res) <- total_res$Gene_name
+write.csv(total_res,"processing/results_DGE_Deseq2.csv")
+```

@@ -1,0 +1,386 @@
+---
+title: "metabolites analysis"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(piano)
+library(ggrepel)
+library(scales)
+```
+
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#489048","#bd7f7b","#7b98bd")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+col <- c( "#8ea76b", "#6b8ea7",	"#a7846b")
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical$X.1 <- NULL
+clinical$V2 <- NULL
+clinical$Age <- NULL
+clinical$BMI <- NULL
+```
+
+### metabolites
+```{r}
+data <- read.csv("processing/clean_data_met.csv", check.names = FALSE)
+names(data)[1] <- "X"
+pca_data <- merge(clinical, data, by = "X")
+```
+
+```{r}
+pca_data$cluster <- factor(pca_data$cluster, levels =  c("HC", "Conv", "LIS", "MIS", "HIS"))
+```
+
+```{r}
+pca_data[is.na(pca_data)] <-  0
+pca <- prcomp(pca_data[,-c(1:4)])
+df_out <- as.data.frame(pca$x)
+df_out$group <- as.factor(pca_data$cluster)
+```
+
+```{r}
+x <- project.pca.proportionvariances <- ((pca$sdev^2) / (sum(pca$sdev^2)))*100
+a1 <- x[1]
+a2 <- x[2]
+```
+
+## PCA / UMAP
+```{r}
+gg <- data.frame(cluster=factor(df_out$group), x=df_out$PC1, y=df_out$PC2)
+centroids <- aggregate(cbind(x,y)~cluster,data=gg,mean)
+gg <- merge(gg,centroids,by="cluster",suffixes=c("",".centroid"))
+
+ggplot(gg)+
+  geom_point(aes(x=x,y=y,color=cluster, fill = cluster), size=3)+
+  stat_ellipse(geom = "polygon", aes(x=x,y=y,color=cluster, fill = cluster), alpha = 0.3) +
+  geom_point(data=centroids, aes(x=x, y=y, color=cluster, fill = cluster), size = 5, alpha = 0.9, shape = 19)+ 
+  geom_segment(aes(x=x.centroid, y=y.centroid, xend=x, yend=y, color=cluster))+
+  theme(legend.title=element_text(size=15),legend.text=element_text(size=12),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=15),axis.title.x=element_text(size=15),
+        axis.text.y=element_text(size=18),axis.text.x=element_text(size=18))+ scale_color_manual(values=col_clusters)+ scale_fill_manual(values=col_clusters)+
+  xlab(paste0("PC1: ",round(a1,0),"% variance"))+
+  ylab(paste0("PC2: ",round(a2,0),"% variance"))+ theme_classic()+
+    theme(axis.title.x = element_text(color="black"),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))
+ggsave("results/figures/PCA_new_clusters_metabolites.pdf", height = 6, width = 7)
+```
+
+## contours
+```{r}
+ggplot(df_out, aes(x=PC1,y=PC2,color=group, fill = group))+
+  geom_point(size=4)+
+  theme(legend.title=element_text(size=15),legend.text=element_text(size=12),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=15),axis.title.x=element_text(size=15),
+        axis.text.y=element_text(size=18),axis.text.x=element_text(size=18))+ scale_color_manual(values=col_clusters)+ scale_fill_manual(values=col_clusters)+
+  xlab(paste0("PC1: ",round(a1,0),"% variance"))+
+  ylab(paste0("PC2: ",round(a2,0),"% variance"))+ theme_classic()+
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))+ geom_density_2d(aes(x=PC1,y=PC2,color=group, fill = group))
+
+ggsave("results/figures/PCA_new_clusters_metabolites_contours.pdf", height = 6, width = 7)
+```
+
+```{r}
+group <- pca_data$cluster
+design <- model.matrix( ~ 0 + group)
+colnames(design) <- gsub("group", "", colnames(design))
+```
+
+```{r}
+fit <- lmFit(t(pca_data[,-c(1:4)]), design)
+```
+
+```{r}
+list_comp <- unique(as.vector(group))
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+```
+
+```{r}
+cont.matrix <- makeContrasts(G1_G2 = comp[1],
+                             G1_G3 = comp[2],
+                             G2_G3 = comp[5],
+                             G1_HC = comp[3],
+                             G2_HC = comp[6],
+                             G3_HC = comp[8],
+                             HC_Conv = comp[10],
+                             
+                             levels=design)
+
+fit.cont <- contrasts.fit(fit, cont.matrix)
+fit.cont <- eBayes(fit.cont)
+```
+```{r}
+x <- c(1, 2, 5, 3, 6, 8, 10)
+```
+
+```{r}
+top_table <- data.frame(BIOCHEMICAL = NA, logFC= NA, P.Value= NA, adj.P.Val= NA, Comp= NA)
+j = 1
+
+for (i in x) {
+  top_table_1 <- topTable(fit.cont, coef=j, adjust="BH", n = Inf, sort.by = "P")
+  top_table_1$Comp <- comp[i]
+  top_table_1$BIOCHEMICAL <- rownames(top_table_1)
+  top_table_1 <- top_table_1[,c(8, 1, 4, 5, 7)]
+  write.table(top_table_1$BIOCHEMICAL[top_table_1$adj.P.Val < 0.1], paste0("processing/GSEA/COVID_model_1_metabolites_", comp[i],".txt"), quote = FALSE, row.names = F)
+  top_table <- rbind(top_table, top_table_1)
+  j = j + 1
+}
+
+top_table <- top_table[complete.cases(top_table),]
+path_table <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_metabolites_with_HC.csv")
+
+print(path_table)
+write.csv(top_table, file =path_table)
+
+DF_top_table <-top_table[top_table$adj.P.Val < 0.1, ]
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_metabolites_with_HC_filt.csv")
+
+write.table(DF_top_table, file = path_results)
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_metabolites_with_HC_filt.xlsx")
+
+write.xlsx(DF_top_table, file = path_results)
+
+table(DF_top_table$Comp)
+```
+```{r}
+library(ggvenn)
+
+list_genes <- list(
+  LIS_HIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "LIS-HIS"],
+  LIS_MIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "LIS-MIS"],
+  HIS_MIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "HIS-MIS"]
+  
+)
+
+ggvenn(list_genes)
+pdf("results/figures/ven_genes_difference_model_1_metabolites.pdf")
+ggvenn(list_genes)
+dev.off()
+
+```
+
+```{r}
+met_imp <- list_genes[[1]]
+#met_imp <- met_imp[!met_imp %in% list_genes[[2]] & !met_imp %in% list_genes[[3]]]
+met_imp <- met_imp[!met_imp %in% list_genes[[2]]]
+```
+
+## pathways
+```{r}
+conv <- read.csv("processing/metabolomics_pathways.csv")
+conv$X <- NULL
+table_item <- read.delim("results/LIMMA/COVID_model_1_LIMMA_results_metabolites_with_HC.csv", sep = ",")
+
+input_bar <- merge(table_item, conv, by = "BIOCHEMICAL")
+input_bar_2 <- input_bar[,c(7, 6, 5)]
+input_bar_2 <- input_bar_2[input_bar_2$adj.P.Val < 0.1,]
+
+input_bar_2 <- input_bar_2[,c(1, 2)]
+input_bar <- input_bar[,c(7, 6)]
+
+d3 <- data.frame(table(input_bar))
+names(d3)[c(1,3)] <-c("Category", "count")
+d3 <- d3[d3$count != 0,]
+d3 <- d3[unique(d3$Category),]
+d3$Comp <- "Total"
+d3$fraction <- d3$count/sum(d3$count)
+d3$N <- sum(d3$count)
+
+d4 <- data.frame(table(input_bar_2))
+names(d4)[c(1,3)] <-c("Category", "count")
+d4 <- d4[d4$count != 0,]
+```
+
+```{r}
+d4$fraction <- NA
+d4$N <- NA
+for (comp in unique(d4$Comp)) {
+  d4$fraction[which(d4$Comp == comp)] <- d4$count[which(d4$Comp == comp)]/sum(d4$count[which(d4$Comp == comp)])
+  d4$N[which(d4$Comp == comp)] <- sum(d4$count[which(d4$Comp == comp)])
+  print(comp)
+  
+}
+```
+
+```{r}
+names(d3)
+```
+```{r}
+names(d4)
+```
+```{r}
+d5 <- rbind(d3, d4)
+```
+
+```{r}
+d5$Group <- paste0(d5$Comp, ", N=",d5$N)
+d5$Group <- factor(d5$Group, levels = rev(c(unique(d5$Group)[grep("Total", unique(d5$Group))],
+                                        unique(d5$Group)[grep("LIS-HC", unique(d5$Group))],
+                                        unique(d5$Group)[grep("HIS-HC", unique(d5$Group))],
+                                        unique(d5$Group)[grep("MIS-HC", unique(d5$Group))],
+                                        unique(d5$Group)[grep("LIS-HIS", unique(d5$Group))],
+                                        unique(d5$Group)[grep("LIS-MIS", unique(d5$Group))],
+                                        unique(d5$Group)[grep("HIS-MIS", unique(d5$Group))]
+                                        )))
+```
+
+```{r}
+mycols_met <- c("#34558b", "#f0daa4", "#eaac9d", "#798fa8", "#fd823e", "#117893", "#d13b40", "#ffaf12", "#a2553a")
+
+ggplot(d5, aes(fill=Category, y=fraction, x=Group))+ 
+    geom_bar(stat="identity", alpha = 1, width = .7, colour="white", lwd=0.1) +
+  labs(x="Comparison",y="Comorbidities frequency")+
+    scale_fill_manual(values = rev(mycols_met))+
+  geom_text(aes(label=ifelse(fraction >= 0.07, paste0("n = ", count, ", \n", round(fraction*100, 0), "%"),"")), position=position_stack(vjust=0.5), colour="white")+
+  coord_flip() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(y="", x="")
+
+ggsave(paste0("results/figures/barplot_comparisons_LIMMA_Metabolites.pdf"), width = 15, height = 8)
+```
+```{r}
+rownames(pca_data) <- pca_data$X
+pca_data <- pca_data[,colnames(pca_data) %in% c("cluster", met_imp)]
+cluster <- pca_data$cluster
+pca_data$cluster <- NULL
+pca_data <- data.frame(t(pca_data))
+pca_data$BIOCHEMICAL <- rownames(pca_data)
+pca_data <- merge(pca_data, conv , by = "BIOCHEMICAL")
+```
+
+```{r}
+library(reshape2)
+
+c1 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_1_only_correlations_between_data.csv")
+c1$group <- "C1"
+c2 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_2_only_correlations_between_data.csv")
+c2$group <- "C2"
+c3 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_3_only_correlations_between_data.csv")
+c3$group <- "C3"
+#c4 <- read.csv("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_Convalescent_only_correlations_between_data.csv")
+#c4$group <- "Conv"
+c5 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_HC_only_correlations_between_data.csv")
+c5$group <- "HC"
+
+data <- rbind(c1, c2, c3, c5)
+data$feat1 <- paste0(data$feat1, "_", data$group)
+data <- data[,c(2,3, 4)]
+data <- dcast(data, feat1 ~ feat2)
+rownames(data) <- data$feat1
+data$feat1 <- NULL
+data <- data.frame(t(data))
+data$BIOCHEMICAL <- rownames(data)
+
+pca_data <- merge(pca_data, data, by = "BIOCHEMICAL", all.x = TRUE)
+rownames(pca_data) <- pca_data$BIOCHEMICAL
+```
+
+```{r}
+library(circlize)
+col_fun_2 = colorRamp2(c(-1,  - 0.5,0,  0.5, 1), c("blue", "#b3ccff","white","#ff9999", "red"))
+col_fun1 = colorRamp2(c(-4,-2,-1, 0,1,2,4), c("#7F7F00","#B2B200" ,"#E5E500","white","#BF7FBF","#993299","#590059"))
+```
+
+```{r}
+pathways <- read.delim("data/omics/pathways_metabolites.txt")
+pathways <- pathways[,c(2, 3)]
+```
+
+```{r}
+pca_data <- merge(pca_data, pathways, by = "BIOCHEMICAL")
+rownames(pca_data) <- pca_data$BIOCHEMICAL
+pca_data <- pca_data[order(pca_data$SUPER_PATHWAY),]
+```
+
+```{r}
+pca_data <- pca_data[pca_data$SUPER_PATHWAY != "Xenobiotics",]
+```
+## heatmap metabolomics
+```{r}
+library(ComplexHeatmap)
+pdf("results/figures/Heatmat_metabolomics_G1_G2_correlation_IFN.pdf", width = 13, height = 7)
+ht = Heatmap(as.matrix(pca_data[,-c(1, 70:76)]),
+             col = col_fun1,
+             show_row_names = TRUE,
+             show_column_names = FALSE,
+             row_title_rot = 0,
+             border = FALSE,
+             column_gap = unit(8, "mm"),
+             right_annotation = rowAnnotation(Pathway = pca_data$SUPER_PATHWAY, col = list(
+                                                                              Pathway = c("Amino Acid" = mycols_met[9],
+                                                                                          "Carbohydrate"= mycols_met[8],
+                                                                                          "Cofactors and Vitamins"= mycols_met[7],
+                                                                                          "Energy"= mycols_met[6],
+                                                                                          "Lipid"= mycols_met[5],
+                                                                                          "Nucleotide"= mycols_met[4],
+                                                                                          "Partially Characterized Molecules"= mycols_met[3],
+                                                                                          "Peptide" = mycols_met[2]
+                                                                                          ))),
+             top_annotation = HeatmapAnnotation(cluster = cluster, col = list(cluster = c("HC" = col_clusters[1],
+                                                                              "Conv" = col_clusters[2],
+                                                                              "LIS" = col_clusters[3],
+                                                                              "MIS" = col_clusters[4],
+                                                                              "HIS" = col_clusters[5])))
+             )
+ht
+dev.off()
+```

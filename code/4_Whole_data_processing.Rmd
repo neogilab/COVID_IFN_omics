@@ -1,0 +1,220 @@
+---
+title: "Correlations covid"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(Hmisc)
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(circlize)
+```
+
+## load meta-data
+```{r}
+id_file <- read.delim("data/clinical/MetaData.txt")
+id_file$X.2 <- NULL
+id_file$X.1 <- NULL
+id_file$X.5 <- NULL
+id_file$X.6 <- NULL
+id_file$condition <- id_file$Group
+```
+
+## load interferon
+```{r}
+antiviral <- read.delim("data/databases/IFN/antiviral_mechanism_IFN.tsv")
+antiviral <- gsub(".* ", "", antiviral$MoleculeName)
+inf_alpha_beta <- read.delim("data/databases/IFN/reactome_interferon_alpha_beta.tsv")
+inf_alpha_beta <- gsub(".* ", "", inf_alpha_beta$MoleculeName)
+inf_gamma <- read.delim("data/databases/IFN/reactome_interferon_gamma.tsv")
+inf_gamma <- gsub(".* ", "", inf_gamma$MoleculeName)
+inf_lambda <- c("IL29", "IL28A", "IL28B")
+```
+
+```{r}
+inf <- unique(c(antiviral, inf_alpha_beta, inf_gamma, inf_lambda))
+```
+
+### transcriptomics
+```{r}
+data_txn <- read.csv("processing/COVID_transcriptomics_vsd_data_deseq2.csv", row.names = 1, check.names = FALSE)
+data_txn <- data_txn[, sapply(data_txn, var) > 0.2]
+data_txn <- data.frame(t(data_txn))
+data_txn$Symbol <- mapIds(org.Hs.eg.db, rownames(data_txn), keytype="ENSEMBL", column="SYMBOL")
+data_txn <- data_txn[!is.na(data_txn$Symbol),]
+data_txn <- data_txn[!duplicated(data_txn$Symbol),]
+rownames(data_txn) <- data_txn$Symbol
+data_txn <- data_txn[rownames(data_txn) %in% inf,]
+data_txn$Symbol <- NULL
+data_txn <- data.frame(t(data_txn))
+rownames(data_txn) <- gsub("\\.", "-", rownames(data_txn))
+```
+
+### metabolomics
+```{r}
+met <- read.delim("data/omics/Metabolome.txt")
+pathways <- split(met$METs, "_")
+pathways <- gsub(".*\\_.*\\_.*", " ",pathways)
+rownames(met) <- gsub("\\_.*", "", met$METs)
+met$METs <- NULL
+met_names <- rownames(met)
+data_met <- data.frame(t(met))
+colnames(data_met) <- met_names
+id_met <- id_file[,c(4, 8)]
+data_met$X.4 <- rownames(data_met)
+data_met <- merge(id_met, data_met, by = "X.4", all.y = TRUE)
+rownames(data_met) <- data_met$KI_ID
+data_met$X.4 <- NULL
+data_met$KI_ID <- NULL
+data_met <- log2(data_met)
+```
+
+```{r}
+olink <- read.csv("data/omics/Olink_Proteom.csv", check.names = FALSE)
+rownames(olink) <- olink$Assay
+olink$Assay <- NULL
+olink$Group <- NULL
+```
+
+## remove peroxydase
+```{r}
+data_net <- read.xlsx("data/Circulating Nets_Ronaldo/Ronaldo_Sample List_NETS_All_updated.xlsx", 3)
+data_net <- data_net[,c(2,5,7)]
+names(data_net)
+rownames(data_net) <- data_net$Study.ID
+data_net$Study.ID <- NULL
+data_net$S100A8.A9..ng.ml.[data_net$S100A8.A9..ng.ml. == "54991,45*"] <- "54991.45"
+data_net$S100A8.A9..ng.ml.[data_net$S100A8.A9..ng.ml. == "11205,66*"] <- "11205.66"
+data_net$S100A8.A9..ng.ml. <- as.numeric(data_net$S100A8.A9..ng.ml.)
+```
+
+IFN-λ1 (A8)	IFN-α2 (B3)	IFN-λ2/3 (B4)	IFN-β (B6)	IFN-γ (B9)
+
+#mfi
+```{r}
+legend_mfi <- read.xlsx("data/LEGENDplex/13SEP2022_Combined data both plates in same analysis.xlsx", 3)
+legend_mfi <- legend_mfi[,c(2, 3, 6:10)]
+legend_mfi <- legend_mfi[complete.cases(legend_mfi),]
+legend_mfi$sample_2 <- gsub("\\_.*", "", legend_mfi$sample)
+id_mfi <- id_file[,c(1, 4)]
+id_mfi$sample_2 <- gsub("COVID19-", "", id_mfi$KI_ID)
+id_mfi$sample_2 <- gsub("\\-", "", id_mfi$sample_2)
+id_mfi$sample_2 %in% legend_mfi$sample_2
+data_mfi <- merge(id_mfi, legend_mfi, by = "sample_2", all.y = TRUE)
+data_mfi$KI_ID <- as.vector(data_mfi$KI_ID)
+data_mfi$KI_ID[is.na(data_mfi$KI_ID)] <- c("COVID19-025", "COVID19-038", "COVID19-HC-1B", "COVID19-HC-30")
+data_mfi$RNASeq <- NULL
+data_mfi$sample_2 <- NULL
+rownames(data_mfi) <- data_mfi$KI_ID
+data_mfi$KI_ID <- NULL
+data_mfi$sample <- NULL
+data_mfi$Group <- NULL
+colnames(data_mfi) <- c("IFN_lambda_1", "IFN_alpha_1", "IFN_lambda_2", "IFN_beta", "IFN_gamma")
+```
+
+## mfi 2
+```{r}
+mfi <- read.csv("data/LEGENDplex_2/Log2MFI_IFN.csv")
+mfi <- mfi[,-c(2:4)]
+colnames(mfi) <- c("sample","IFN_lambda_1", "IFN_alpha_2", "IFN_beta", "IFN_gamma", "IFN_lambda_2")
+mfi$sample_2 <- gsub("\\_.*", "", mfi$sample)
+data_mfi <- merge(id_mfi, mfi, by = "sample_2")
+data_mfi$KI_ID <- as.vector(data_mfi$KI_ID)
+data_mfi$KI_ID[is.na(data_mfi$KI_ID)] <- c("COVID19-025", "COVID19-038", "COVID19-HC-1B", "COVID19-HC-30")
+rownames(data_mfi) <- data_mfi$KI_ID
+data_mfi$sample <- NULL
+data_mfi$sample_2 <- NULL
+data_mfi$RNASeq <- NULL
+data_mfi$KI_ID <- NULL
+data_mfi$IFN_lambda_1 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_lambda_1))
+data_mfi$IFN_lambda_2 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_lambda_2))
+data_mfi$IFN_alpha_2 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_alpha_2))
+data_mfi$IFN_beta <- as.numeric(gsub("\\,", ".", data_mfi$IFN_beta))
+data_mfi$IFN_gamma <- as.numeric(gsub("\\,", ".", data_mfi$IFN_gamma))
+```
+
+## mfi 3
+```{r}
+mfi <- read.csv("data/LEGENDplex_3/LEGENDplex_ Log MFI- background.csv")
+mfi <- mfi[-1,]
+mfi$Condition <- NULL
+colnames(mfi) <- c("sample","IFN_lambda_1", "IFN_alpha_2", "IFN_beta", "IFN_gamma", "IFN_lambda_2")
+mfi$sample_2 <- gsub("\\_.*", "", mfi$sample)
+data_mfi <- merge(id_mfi, mfi, by = "sample_2")
+data_mfi$KI_ID <- as.vector(data_mfi$KI_ID)
+data_mfi$KI_ID[is.na(data_mfi$KI_ID)] <- c("COVID19-025", "COVID19-038", "COVID19-HC-1B", "COVID19-HC-30")
+rownames(data_mfi) <- data_mfi$KI_ID
+data_mfi$sample <- NULL
+data_mfi$sample_2 <- NULL
+data_mfi$RNASeq <- NULL
+data_mfi$KI_ID <- NULL
+data_mfi$IFN_lambda_1 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_lambda_1))
+data_mfi$IFN_lambda_2 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_lambda_2))
+data_mfi$IFN_alpha_2 <- as.numeric(gsub("\\,", ".", data_mfi$IFN_alpha_2))
+data_mfi$IFN_beta <- as.numeric(gsub("\\,", ".", data_mfi$IFN_beta))
+data_mfi$IFN_gamma <- as.numeric(gsub("\\,", ".", data_mfi$IFN_gamma))
+```
+
+## neopterin
+```{r}
+neopterin <- read.csv("data/Neopterin/Combined data_Neopterin.csv", header = FALSE)
+neopterin <- neopterin[,c(1, 2, 8)]
+
+id_file$neopterin_ID <- NA
+id_file$neopterin_ID[id_file$KI_ID %in% neopterin$V1] <- id_file$KI_ID[id_file$KI_ID %in% neopterin$V1]
+id_file$neopterin_ID[!id_file$KI_ID %in% neopterin$V1] <- gsub("HC-", "HC", id_file$ID[!id_file$KI_ID %in% neopterin$V1] )
+
+id_file$neopterin_ID[!id_file$neopterin_ID %in% neopterin$V1] <- gsub("0", "", id_file$neopterin_ID[!id_file$neopterin_ID %in% neopterin$V1])
+names(neopterin)[1] <- "neopterin_ID"
+id_neopterin <- id_file[,c(4, 10)]
+data_neopterin <- merge(id_neopterin, neopterin, by = "neopterin_ID", all.y = TRUE)
+data_neopterin$KI_ID[is.na(data_neopterin$KI_ID)] <- data_neopterin$neopterin_ID[is.na(data_neopterin$KI_ID)]
+data_neopterin$KI_ID <- as.vector(data_neopterin$KI_ID)
+data_neopterin$KI_ID[is.na(data_neopterin$KI_ID)] <- c("COVID19-025", "COVID19-038")
+condition <- data_neopterin[,c(2,3)]
+rownames(data_neopterin) <- data_neopterin$KI_ID
+data_neopterin <- data_neopterin[,c(2, 4)]
+data_neopterin$KI_ID <- NULL
+data_neopterin$V8 <- as.numeric(data_neopterin$V8)
+```
+## auto-antibodies
+```{r}
+data_auto <- read.csv("data/auto_antibodies/Luminex_data_for_Xi_and_Soham NL AC_clean.csv")
+data_auto <- data_auto[grepl("COVID19", data_auto$Luminex_data_october_2022_with_NEW_names.V6),]
+data_auto$Luminex_data_october_2022_with_NEW_names.V6 <- gsub(".*COVID19\\_", "", data_auto$Luminex_data_october_2022_with_NEW_names.V6)
+#data_auto <- data_auto[data_auto$Luminex_data_october_2022_with_NEW_names.V6 %in% rownames(data_mfi),]
+rownames(data_auto) <- data_auto$Luminex_data_october_2022_with_NEW_names.V6
+data_auto$Luminex_data_october_2022_with_NEW_names.V6 <- NULL
+```
+
+
+```{r}
+write.csv(data_auto, "processing/clean_data_auto.csv")
+write.csv(data_txn, "processing/clean_data_transcriptomics.csv")
+write.csv(olink, "processing/clean_data_olink.csv")
+write.csv(data_net, "processing/clean_data_net.csv")
+write.csv(data_neopterin, "processing/clean_data_neopterin.csv")
+write.csv(data_met, "processing/clean_data_met.csv")
+write.csv(data_mfi, "processing/clean_data_mfi.csv")
+```
+

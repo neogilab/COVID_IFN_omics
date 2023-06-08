@@ -1,0 +1,446 @@
+---
+title: "olink analysis"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(piano)
+library(ggrepel)
+library(scales)
+```
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#489048","#bd7f7b","#7b98bd")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical$X.1 <- NULL
+clinical$V2 <- NULL
+clinical$Age <- NULL
+clinical$BMI <- NULL
+```
+
+### olink
+```{r}
+data <- read.csv("processing/clean_data_olink.csv")
+names(data)[1] <- "X"
+pca_data <- merge(clinical, data, by = "X")
+```
+
+```{r}
+pca_data$cluster <- factor(pca_data$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+```
+
+
+```{r}
+pca_data[is.na(pca_data)] <-  0
+pca <- prcomp(pca_data[,-c(1:4)])
+df_out <- as.data.frame(pca$x)
+df_out$group <- as.factor(pca_data$cluster)
+```
+
+```{r}
+x <- project.pca.proportionvariances <- ((pca$sdev^2) / (sum(pca$sdev^2)))*100
+a1 <- x[1]
+a2 <- x[2]
+```
+
+
+## PCA / UMAP
+```{r}
+gg <- data.frame(cluster=factor(df_out$group), x=df_out$PC1, y=df_out$PC2)
+centroids <- aggregate(cbind(x,y)~cluster,data=gg,mean)
+gg <- merge(gg,centroids,by="cluster",suffixes=c("",".centroid"))
+
+ggplot(gg)+
+  geom_point(aes(x=x,y=y,color=cluster, fill = cluster), size=3)+
+  stat_ellipse(geom = "polygon", aes(x=x,y=y,color=cluster, fill = cluster), alpha = 0.3) +
+  geom_point(data=centroids, aes(x=x, y=y, color=cluster, fill = cluster), size = 5, alpha = 0.9, shape = 19)+ 
+  geom_segment(aes(x=x.centroid, y=y.centroid, xend=x, yend=y, color=cluster))+
+  theme(legend.title=element_text(size=15),legend.text=element_text(size=12),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=15),axis.title.x=element_text(size=15),
+        axis.text.y=element_text(size=18),axis.text.x=element_text(size=18))+ scale_color_manual(values=col_clusters)+ scale_fill_manual(values=col_clusters)+
+  xlab(paste0("PC1: ",round(a1,0),"% variance"))+
+  ylab(paste0("PC2: ",round(a2,0),"% variance"))+ theme_classic()+
+    theme(axis.title.x = element_text(color="black"),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))
+ggsave("results/figures/PCA_new_clusters_olink.pdf", height = 6, width = 7)
+```
+
+## contours
+```{r}
+ggplot(df_out, aes(x=PC1,y=PC2,color=group, fill = group))+
+  geom_point(size=4)+
+  theme(legend.title=element_text(size=15),legend.text=element_text(size=12),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=15),axis.title.x=element_text(size=15),
+        axis.text.y=element_text(size=18),axis.text.x=element_text(size=18))+ scale_color_manual(values=col_clusters)+ scale_fill_manual(values=col_clusters)+
+  xlab(paste0("PC1: ",round(a1,0),"% variance"))+
+  ylab(paste0("PC2: ",round(a2,0),"% variance"))+ theme_classic()+
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))+ geom_density_2d(aes(x=PC1,y=PC2,color=group, fill = group))
+
+ggsave("results/figures/PCA_new_clusters_Olink_contours.pdf", height = 6, width = 7)
+```
+
+## LIMMA
+```{r}
+group <- pca_data$cluster
+
+design <- model.matrix( ~ 0 + group)
+colnames(design) <- gsub("group", "", colnames(design))
+```
+
+```{r}
+fit <- lmFit(t(pca_data[,-c(1:4)]), design)
+```
+
+```{r}
+list_comp <- unique(as.vector(group))
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+```
+
+```{r}
+cont.matrix <- makeContrasts(G1_G2 = comp[1],
+                             G1_G3 = comp[2],
+                             G2_G3 = comp[5],
+                             G1_HC = comp[3],
+                             G2_HC = comp[6],
+                             G3_HC = comp[8],
+                             HC_Conv = comp[10],
+                             
+                             levels=design)
+
+fit.cont <- contrasts.fit(fit, cont.matrix)
+fit.cont <- eBayes(fit.cont)
+```
+
+```{r}
+x <- c(1, 2, 5, 3, 6, 8, 10)
+```
+
+
+```{r}
+top_table <- data.frame(BIOCHEMICAL = NA, logFC= NA, P.Value= NA, adj.P.Val= NA, Comp= NA)
+j = 1
+
+
+for (i in x) {
+  top_table_1 <- topTable(fit.cont, coef=j, adjust="BH", n = Inf, sort.by = "P")
+  top_table_1$Comp <- comp[i]
+  top_table_1$BIOCHEMICAL <- rownames(top_table_1)
+  top_table_1 <- top_table_1[,c(8, 1, 4, 5, 7)]
+  write.table(top_table_1$BIOCHEMICAL[top_table_1$adj.P.Val < 0.1], paste0("processing/GSEA/COVID_model_1_olink_", comp[i],".txt"), quote = FALSE, row.names = F)
+  top_table <- rbind(top_table, top_table_1)
+  j = j + 1
+}
+
+top_table <- top_table[complete.cases(top_table),]
+path_table <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC.csv")
+
+print(path_table)
+write.csv(top_table, file =path_table)
+
+DF_top_table <-top_table[top_table$adj.P.Val < 0.1, ]
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC_filt.csv")
+
+write.table(DF_top_table, file = path_results)
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC_filt.xlsx")
+
+write.xlsx(DF_top_table, file = path_results)
+
+table(DF_top_table$Comp)
+```
+
+```{r}
+library(ggvenn)
+
+list_genes <- list(
+  LIS_HIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "LIS-HIS"],
+  LIS_MIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "LIS-MIS"],
+  HIS_MIS = DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "HIS-MIS"]
+  
+)
+
+ggvenn(list_genes)
+pdf("results/figures/ven_genes_difference_model_1_olink.pdf")
+ggvenn(list_genes)
+dev.off()
+
+```
+
+```{r}
+x <- list_genes$LIS_HIS[list_genes$LIS_HIS %in% list_genes$LIS_MIS & list_genes$LIS_HIS %in% list_genes$HIS_MIS]
+```
+
+```{r}
+clinical <- pca_data[,colnames(pca_data) %in% c("cluster", x)]
+```
+
+```{r}
+my_comparisons <- list(c("LIS", "HIS"), c("LIS", "MIS"), c("HIS", "MIS"))
+```
+
+```{r}
+i_condition <- c(1)
+i_isg_scores <- c(2:6)
+
+for (i in i_condition) {
+  for (j in i_isg_scores) {
+    print(names(clinical)[i])
+    print(names(clinical)[j])
+    table_1 <- clinical[,c(j, i)]
+    a <- ggplot(table_1, aes(y = table_1[,1], x = table_1[,2], fill = table_1[,2])) + 
+      geom_boxplot(position=position_dodge(1), size = 0.1, alpha =0.8, outlier.shape = NA)+ 
+      labs(y= paste0("",names(table_1)[1], ""), x = paste0(names(table_1)[2], ""))+ theme_classic()+
+      theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0))) + 
+    geom_jitter(shape=16, size=1, color="black", position=position_jitter(0.05))+ 
+  stat_compare_means(comparisons = my_comparisons)+ scale_fill_manual(values=col_clusters)
+    ggsave(paste0("results/figures/boxplots/", names(clinical)[i],"_", names(clinical)[j],"_boxplots_olink_clusters.pdf"), width = 4, height = 3)
+  }
+  
+}
+```
+## volcano plots
+```{r}
+dge <- read.csv("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC.csv")
+```
+```{r}
+unique(dge$Comp)
+```
+```{r}
+cutoff_pval <- 0.1
+```
+
+```{r}
+name_ana <- "HIS-MIS"
+tt <- dge[dge$Comp == "HIS-MIS",]
+tt$X <- NULL
+name_ana <- unique(tt$Comp)
+tt$color <- NA
+
+for (i in 1:nrow(tt)){
+  if(tt[i, 2] > 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_>1.5"
+  }
+  if(tt[i, 2] > 1 & tt[i, 2] < 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_1>x>1.5"
+  }
+  if(tt[i, 2] > 0 & tt[i, 2] < 1 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_0>x>1"
+  }
+  if(tt[i, 2] < 0 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "down_regulated"
+  }
+  if(tt[i, 4] > cutoff_pval){
+    tt[i, ncol(tt)] <- "NS"
+    #tt[i, 1] <- NA
+  }
+}
+
+tt$BIOCHEMICAL <- ifelse(abs(tt$logFC) > 0 & tt$adj.P.Val < 0.05, as.vector(tt$BIOCHEMICAL), NA)
+length(tt$BIOCHEMICAL[!is.na(tt$BIOCHEMICAL)])
+
+
+tt$color[is.na(tt$color)] <- "significant"
+#tt$Gene_name[tt$color == "significant"] <- NA
+cols <- c("up_regulated_>1.5" = "#cb4818",
+          "up_regulated_1>x>1.5" = "#d27f28", 
+          "up_regulated_0>x>1" = "#f1c232", 
+          "down_regulated" = "#86b7e8", 
+          "NS" = "grey", 
+          "significant" = "#586c6e")
+
+vol <- ggplot(tt, aes(x = logFC, y = -log10(adj.P.Val), colour = color, size = abs(logFC)))+ 
+  geom_point(alpha = 1, na.rm = T)+ 
+  theme(legend.title=element_text(size=2),legend.text=element_text(size=2),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=25),axis.title.x=element_text(size=25),
+        axis.text.y=element_text(size=25),axis.text.x=element_text(size=25)) +
+  labs(x="Log2 Fold Change",y="-log10 (adj.P.Val)")+
+  geom_text_repel(aes(label = BIOCHEMICAL),size=2,label.size = 0.1, color = "black", xlim = c(NA, Inf),
+    # Do not repel from top or bottom edges.
+    ylim = c(-Inf, Inf))+ theme_classic()+ 
+  geom_hline(yintercept=-log10(0.1), linetype="dashed", color = "black")+scale_color_manual(values = cols)
+
+print(vol)
+path_fig <- paste0("results/figures/volcano_plots/", name_ana, "_volcano_plot_3_colors.pdf")
+ggsave(path_fig, width = 6, height = 4)
+```
+
+```{r}
+name_ana <- "LIS-MIS"
+tt <- dge[dge$Comp == "LIS-MIS",]
+tt$logFC <- -1*tt$logFC
+tt$X <- NULL
+name_ana <- unique(tt$Comp)
+tt$color <- NA
+
+for (i in 1:nrow(tt)){
+  if(tt[i, 2] > 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_>1.5"
+  }
+  if(tt[i, 2] > 1 & tt[i, 2] < 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_1>x>1.5"
+  }
+  if(tt[i, 2] > 0 & tt[i, 2] < 1 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_0>x>1"
+  }
+  if(tt[i, 2] < 0 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "down_regulated"
+  }
+  if(tt[i, 4] > cutoff_pval){
+    tt[i, ncol(tt)] <- "NS"
+    #tt[i, 1] <- NA
+  }
+}
+
+tt$BIOCHEMICAL <- ifelse(abs(tt$logFC) > 0 & tt$adj.P.Val < 0.05, as.vector(tt$BIOCHEMICAL), NA)
+length(tt$BIOCHEMICAL[!is.na(tt$BIOCHEMICAL)])
+
+
+tt$color[is.na(tt$color)] <- "significant"
+#tt$Gene_name[tt$color == "significant"] <- NA
+cols <- c("up_regulated_>1.5" = "#cb4818",
+          "up_regulated_1>x>1.5" = "#d27f28", 
+          "up_regulated_0>x>1" = "#f1c232", 
+          "down_regulated" = "#86b7e8", 
+          "NS" = "grey", 
+          "significant" = "#586c6e")
+
+vol <- ggplot(tt, aes(x = logFC, y = -log10(adj.P.Val), colour = color, size = abs(logFC)))+ 
+  geom_point(alpha = 1, na.rm = T)+ 
+  theme(legend.title=element_text(size=2),legend.text=element_text(size=2),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=25),axis.title.x=element_text(size=25),
+        axis.text.y=element_text(size=25),axis.text.x=element_text(size=25)) +
+  labs(x="Log2 Fold Change",y="-log10 (adj.P.Val)")+
+  geom_text_repel(aes(label = BIOCHEMICAL),size=2,label.size = 0.1, color = "black", xlim = c(NA, Inf),
+    # Do not repel from top or bottom edges.
+    ylim = c(-Inf, Inf))+ theme_classic()+ 
+  geom_hline(yintercept=-log10(0.1), linetype="dashed", color = "black")+scale_color_manual(values = cols)
+
+print(vol)
+path_fig <- paste0("results/figures/volcano_plots/", name_ana, "_volcano_plot_3_colors.pdf")
+ggsave(path_fig, width = 6, height = 4)
+```
+
+```{r}
+name_ana <- "LIS-HIS"
+tt <- dge[dge$Comp == "LIS-HIS",]
+tt$logFC <- -1*tt$logFC
+tt$X <- NULL
+name_ana <- unique(tt$Comp)
+tt$color <- NA
+
+for (i in 1:nrow(tt)){
+  if(tt[i, 2] > 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_>1.5"
+  }
+  if(tt[i, 2] > 1 & tt[i, 2] < 1.5 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_1>x>1.5"
+  }
+  if(tt[i, 2] > 0 & tt[i, 2] < 1 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "up_regulated_0>x>1"
+  }
+  if(tt[i, 2] < 0 & tt[i, 4] < cutoff_pval){
+    tt[i, ncol(tt)] <- "down_regulated"
+  }
+  if(tt[i, 4] > cutoff_pval){
+    tt[i, ncol(tt)] <- "NS"
+    #tt[i, 1] <- NA
+  }
+}
+
+tt$BIOCHEMICAL <- ifelse(abs(tt$logFC) > 1 & tt$adj.P.Val < 0.05, as.vector(tt$BIOCHEMICAL), NA)
+length(tt$BIOCHEMICAL[!is.na(tt$BIOCHEMICAL)])
+
+
+tt$color[is.na(tt$color)] <- "significant"
+#tt$Gene_name[tt$color == "significant"] <- NA
+cols <- c("up_regulated_>1.5" = "#cb4818",
+          "up_regulated_1>x>1.5" = "#d27f28", 
+          "up_regulated_0>x>1" = "#f1c232", 
+          "down_regulated" = "#86b7e8", 
+          "NS" = "grey", 
+          "significant" = "#586c6e")
+
+vol <- ggplot(tt, aes(x = logFC, y = -log10(adj.P.Val), colour = color, size = abs(logFC)))+ 
+  geom_point(alpha = 1, na.rm = T)+ 
+  theme(legend.title=element_text(size=2),legend.text=element_text(size=2),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=25),axis.title.x=element_text(size=25),
+        axis.text.y=element_text(size=25),axis.text.x=element_text(size=25)) +
+  labs(x="Log2 Fold Change",y="-log10 (adj.P.Val)")+
+  geom_text_repel(aes(label = BIOCHEMICAL),size=2,label.size = 0.1, color = "black", xlim = c(NA, Inf),
+    # Do not repel from top or bottom edges.
+    ylim = c(-Inf, Inf))+ theme_classic()+ 
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "black")+scale_color_manual(values = cols)
+
+print(vol)
+path_fig <- paste0("results/figures/volcano_plots/", name_ana, "_volcano_plot_3_colors.pdf")
+ggsave(path_fig, width = 6, height = 4)
+```
+

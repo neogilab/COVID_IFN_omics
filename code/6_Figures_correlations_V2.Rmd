@@ -1,0 +1,209 @@
+---
+title: "Correlations new clusters"
+output: html_notebook
+---
+
+
+    ISG scores vs cell types (N barplot R and 1 panel per cluster) (3 plots) 
+    ISG score vs activation markers (3 plots) 
+    ISG score vs plasma IFN (3 plots) 
+    Heatmap ISG score vs autoantibodies (1 plot) 
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+```{r}
+library(Hmisc)
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(circlize)
+```
+
+```{r}
+col_clusters <- c("#a07bbd","#7b98bd", "#bd7f7b", "#FFA500","#A0A0A4")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+## correlations cell types vs ISG (conditions)
+## cell types vs IFN scores
+```{r}
+c1 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_cell_type/correlations_all_features_ifn_score_cell_type_Convalescent_only_correlations_between_data.csv")
+c1$condition <- "Conv"
+c2 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_cell_type/correlations_all_features_ifn_score_cell_type_HC_only_correlations_between_data.csv")
+c2$condition <- "HC"
+c3 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_cell_type/correlations_all_features_ifn_score_cell_type_hosp_mild_only_correlations_between_data.csv")
+c3$condition <- "Mild"
+c4 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_cell_type/correlations_all_features_ifn_score_cell_type_hosp_severe_only_correlations_between_data.csv")
+c4$condition <- "Severe"
+
+
+data <- rbind(c1, c2, c3, c4)
+data$p <- NULL
+data$type_feat1 <- NULL
+data$type_feat2 <- NULL
+data$feat3 <- paste0(data$feat2, "_" , data$condition)
+data_R <- dcast(data, feat1 ~ feat3, value.var = 'R')
+rownames(data_R) <- data_R$feat1
+data_R$feat1 <- NULL
+condition <- gsub(".*\\_", "", colnames(data_R))
+data_pval <- dcast(data, feat1 ~ feat3, value.var = 'Padj')
+rownames(data_pval) <- data_pval$feat1
+data_pval$feat1 <- NULL
+```
+
+```{r}
+condition <- factor(condition, levels = c("HC", "Conv", "Mild", "Severe"))
+```
+
+```{r}
+col_fun_2 = colorRamp2(c(-1,  - 0.5,0,  0.5, 1), c("blue", "#b3ccff","white","#ff9999", "red"))
+
+pdf("results/figures/Heatmat_correlations_cell_type_ISG_score_conditions.pdf", width = 8, height = 5)
+Heatmap(data_R, column_order = colnames(data_R), row_order = rownames(data_R), column_split = condition, col = col_fun_2, cell_fun = function(j, i, x, y, width, height, fill) 
+        {
+          grid.text(sprintf("%.4f", data_pval[i, j]), x, y, gp = gpar(fontsize = 10))
+        })
+dev.off()
+```
+## Make figure for each comparison
+
+```{r}
+colnames(file)
+```
+
+```{r}
+list_folder <- list(
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/data_met_ifn_score",
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/ifn_score_autoantibodies",
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/ifn_mfi_ifn_score",
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/ifn_score_cell_type",
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/neopterin_ifn_score",
+  "/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/new_data_correlations/net_ifn_score")
+
+global_files <- data.frame(X = NA, feat1 = NA, feat2 = NA, R = NA, p = NA, Padj = NA, type_feat1 = NA, type_feat2 = NA, group = NA)
+
+
+for (i in 1:6) {
+  files <- list.files(list_folder[[i]])
+  files <- files[grepl("between", files)]
+  for (j in 1:5){
+    file2 <- data.frame(X = NA, feat1 = NA, feat2 = NA, R = NA, p = NA, Padj = NA, type_feat1 = NA, type_feat2 = NA)
+    file <- files[j]
+    condition <- gsub("_only_correlations_between_data.csv", "", file)
+    condition <- gsub("correlations_all_features_", "", condition)
+    file <- read.csv(paste0(list_folder[[i]], "/", file))
+    file2 <- rbind(file, file2)
+    file2$group <- condition
+    global_files <- rbind(file2, global_files)
+  }
+}
+
+global_files <- global_files[complete.cases(global_files),]
+```
+
+
+```{r}
+write.xlsx(global_files, "manuscript/correlations_ISG_clusters.xlsx")
+```
+
+```{r}
+global_files <- read.xlsx("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/manuscript/correlations_ISG_clusters.xlsx", 1)
+```
+
+```{r}
+data <- global_files[global_files$type_feat1 == "cell_type",]
+data$p <- round(data$p, 3)
+
+data$group <- gsub("ifn_score_cell_type_", "", data$group)
+data$group[data$group == 1] <- "LIS"
+data$group[data$group == 2] <- "HIS"
+data$group[data$group == 3] <- "MIS"
+data$group[data$group == "Convalescent_1"] <- "Conv"
+data$group[data$group == "HC_1"] <- "HC"
+data$group <- factor(data$group, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+
+# Use position=position_dodge()
+ggplot(data=data, aes(x=R, y=feat1, fill=group)) +
+geom_bar(stat="identity", position=position_dodge(preserve = "single"))+ 
+  facet_wrap(~ feat2)+theme_classic()+scale_fill_manual(values = col_clusters)+ geom_vline(xintercept = 0, col = "grey")
+  #+ geom_text(aes(label = p, group = group), position = position_dodge(width = 0.9))
+
+ggsave("results/figures/correlations_plots_new_clusters_cell_type_ISG_score.pdf", height = 3, width = 10)
+```
+
+```{r}
+c1 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_autoantibodies/correlations_all_features_ifn_score_autoantibodies_1_only_correlations_between_data.csv")
+c1$comp <- "C1"
+c2 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_autoantibodies/correlations_all_features_ifn_score_autoantibodies_2_only_correlations_between_data.csv")
+c2$comp <- "C2"
+#c3 <- read.csv("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/ifn_score_autoantibodies/correlations_all_features_ifn_score_autoantibodies_3_only_correlations_between_data.csv")
+#c3$comp <- "C3"
+c4 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_autoantibodies/correlations_all_features_ifn_score_autoantibodies_Convalescent_only_correlations_between_data.csv")
+c4$comp <- "Conv"
+c5 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/ifn_score_autoantibodies/correlations_all_features_ifn_score_autoantibodies_HC_only_correlations_between_data.csv")
+c5$comp <- "HC"
+
+data <- rbind(c1, c2)
+data$type <- ifelse(grepl("SARS",data$feat1) | data$feat1 %in% c("B62_EBNA1"), "covid", "ifn")
+
+data <- data[data$feat1 != "B61_Anti.human_IgG",]
+data$comp <- as.vector(data$comp)
+data$comp[data$comp == "C1"] <- "LIS"
+data$comp[data$comp == "C2"] <- "HIS"
+data$comp <- factor(data$comp, levels = c("HC", "Conv", "LIS", "HIS"))
+ggplot(data=data, aes(x=R, y=feat1, fill=comp))+ 
+      facet_grid(type ~ feat2, scales = "free", space = "free") +
+geom_bar(stat="identity", position=position_dodge(preserve = "single"))+theme_classic()+scale_fill_manual(values = col_clusters[c(4, 5)])+ geom_vline(xintercept = 0, col = "grey")
+  #+ geom_text(aes(label = p, group = group), position = position_dodge(width = 0.9))
+
+ggsave("results/figures/correlations_plots_new_cluster_IFN_score_autoantibodies.pdf", height = 3, width = 6)
+```
+
+
+```{r}
+pathways <- read.delim("data/omics/pathways_metabolites.txt")
+pathways <- pathways[,c(2, 3)]
+```
+
+```{r}
+c1 <- read.csv("/home/flomik/Desktop/Code-PHD/data/all_data_correlations/met_ifn_score/correlations_all_features_met_ifn_score_hosp_only_correlations_between_data.csv")
+
+c1 <- c1[,c(2, 3, 4)]
+
+data <- dcast(c1, feat1 ~ feat2)
+rownames(data) <- data$feat1
+data$feat1 <- NULL
+data <- data.frame(t(data))
+data$BIOCHEMICAL <- rownames(data)
+data <- merge(data, pathways, by = "BIOCHEMICAL")
+rownames(data) <- data$BIOCHEMICAL
+data <- data[order(data$SUPER_PATHWAY),]
+
+col_fun = colorRamp2(c(-1, 0, 1), c("#ffce3c", "black", "#11ecf0"))
+
+pdf("results/figures/heatmap_correlations_ISG_score_metabolomics_COVID.pdf", height = 10)
+Heatmap(as.matrix(data[,-c(1, 5)]), col = col_fun, 
+        row_order = rownames(data),
+        column_order = colnames(data[,-c(1, 5)]),
+        right_annotation = rowAnnotation(Pathway = data$SUPER_PATHWAY))
+dev.off()
+```
+
+

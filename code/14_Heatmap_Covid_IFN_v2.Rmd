@@ -1,0 +1,174 @@
+---
+title: "Correlations covid"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(circlize)
+```
+## load clinical
+```{r}
+clinical_2 <- read.delim("data/clinical/MetaData.txt")
+clinical_2$ID <- NULL
+clinical_2$ID2 <- NULL
+clinical_2$KI_ID <- gsub("\\-", ".", clinical_2$KI_ID)
+```
+
+## load interferon
+```{r}
+antiviral <- read.delim("data/databases/IFN/antiviral_mechanism_IFN.tsv")
+antiviral <- gsub(".* ", "", antiviral$MoleculeName)
+inf_alpha_beta <- read.delim("data/databases/IFN/reactome_interferon_alpha_beta.tsv")
+inf_alpha_beta <- gsub(".* ", "", inf_alpha_beta$MoleculeName)
+inf_gamma <- read.delim("data/databases/IFN/reactome_interferon_gamma.tsv")
+inf_gamma <- gsub(".* ", "", inf_gamma$MoleculeName)
+inf_lambda <- c("IL29", "IL28A", "IL28B")
+```
+
+```{r}
+inf <- unique(c(antiviral, inf_alpha_beta, inf_gamma, inf_lambda))
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical.csv")
+clinical <- clinical[,c(2, 39, 4, 5)]
+```
+
+```{r}
+clinical_2$KI_ID
+```
+```{r}
+clinical$KI_ID <- gsub("\\-", ".", clinical$KI_ID)
+```
+
+```{r}
+clinical_2 <- clinical_2[clinical_2$KI_ID %in% clinical$KI_ID,]
+clinical_2 <- clinical_2[!is.na(clinical_2$Group),]
+```
+
+## load data
+### transcriptomics
+```{r}
+data_txn <- read.csv("processing/COVID_transcriptomics_vsd_data_deseq2.csv", row.names = 1, check.names = FALSE)
+data_txn <- data_txn[, sapply(data_txn, var) > 0.2]
+data_txn <- data.frame(t(data_txn))
+data_txn$Symbol <- mapIds(org.Hs.eg.db, rownames(data_txn), keytype="ENSEMBL", column="SYMBOL")
+data_txn <- data_txn[!is.na(data_txn$Symbol),]
+data_txn <- data_txn[!duplicated(data_txn$Symbol),]
+rownames(data_txn) <- data_txn$Symbol
+data_txn <- data_txn[rownames(data_txn) %in% inf,]
+```
+
+```{r}
+write.csv(data_txn, "processing/data_txn_interferon_values.csv")
+```
+
+## heatmap (add deseq2)
+```{r}
+dge <- read.csv("processing/results_DGE_Deseq2.csv")
+names(dge)[1] <- "Symbol"
+
+data <- merge(dge, data_txn, by = "Symbol", all.y = TRUE)
+
+data[,-c(1:14)] <- data.frame(t(scale(t(data[,-c(1:14)]))))
+
+data$ifn_alpha_beta <- ifelse(data$Gene_name %in% inf_alpha_beta, "yes", NA)
+data$antiviral <- ifelse(data$Gene_name %in% antiviral, "yes", NA)
+data$ifn_gamma <- ifelse(data$Gene_name %in% inf_gamma, "yes", NA)
+data$ifn_lambda <- ifelse(data$Gene_name %in% inf_lambda, "yes", NA)
+
+col_fun_2 = colorRamp2(c(-5,  - 1,0,  1, 5), c("blue", "#b3ccff","white","#ff9999", "red"))
+col_fun1 = colorRamp2(c(-4,-2,-1, 0,1,2,4), c("#7F7F00","#B2B200" ,"#E5E500","white","#BF7FBF","#993299","#590059"))
+col_fun = colorRamp2(c(-2, 0, 2), c("green", "white", "red"))
+```
+
+```{r}
+patients <- colnames(data)[-c(1:14, 83:86)]
+
+clinical_2 <- clinical_2[!is.na(clinical_2$Group),]
+clinical_2 <- clinical_2[order(match(clinical_2$KI_ID, patients)),]
+
+condition <- clinical_2$Group
+
+condition <- factor(condition, levels = c("HC", "Convalescent", "hosp_mild", "hosp_severe"))
+```
+
+
+```{r}
+patients
+```
+
+```{r}
+clinical_2$KI_ID
+```
+
+```{r}
+rownames(data) <- data$Gene_name
+```
+
+```{r}
+length(condition)
+```
+
+```{r}
+colnames(data)
+```
+```{r}
+ncol(data[,-c(1:14, 83:86)])
+```
+```{r}
+length(data$LFC_Conv_HC)
+```
+```{r}
+length(rownames(data))
+```
+```{r}
+pdf("results/figures/Heatmat_transcriptomics_IFN_COVID.pdf", width = 10, height = 10)
+ht = Heatmap(as.matrix(data[,-c(1:14, 83:86)]),
+             col = col_fun1,
+             show_row_names = TRUE,
+             column_order = colnames(data)[-c(1:14, 83:86)],
+             column_split = condition,
+             show_column_names = FALSE,
+             row_title_rot = 0,
+             border = FALSE,
+             column_gap = unit(2, "mm"),
+             right_annotation = rowAnnotation(
+                                              HC_ML = data$LFC_Mild_HC,
+                                              HC_SV = data$LFC_Severe_HC,
+                                              alpha_beta = data$ifn_alpha_beta,
+                                              gamma = data$ifn_gamma,
+                                              antiviral = data$antiviral,
+                                              
+                                              col = list(
+                                                         HC_CV = col_fun_2,
+                                                         HC_ML = col_fun_2,
+                                                         HC_SV = col_fun_2),  show_legend = TRUE, gp = gpar(col = "grey")
+             )
+             )
+
+ht
+dev.off()
+```

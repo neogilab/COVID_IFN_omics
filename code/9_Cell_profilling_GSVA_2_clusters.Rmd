@@ -1,0 +1,363 @@
+---
+title: "Cell profilling GSVA"
+output: html_notebook
+---
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+```{r}
+library("GSVA")
+library("limma")
+library(piano)
+library(mygene)
+library(org.Hs.eg.db)
+library(reshape2)
+library(xlsx)
+library(ggplot2)
+library(ggpubr)
+```
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#489048","#bd7f7b","#7b98bd")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+data = read.delim("data/cibersort/LM22.txt", sep = "\t")
+data_2 <- melt(data,  id.vars = "Gene.symbol")
+data_2$value[data_2$value < 1000] <- NA
+data_2$value[!is.na(data_2$value)] <- "mark"
+data_2 <- data_2[!is.na(data_2$value),]
+x <- table(data_2$variable, data_2$value)
+
+cell_types <- as.vector(unique(data_2$variable))
+list_cell_type <- list()
+
+a <- 1
+
+for (i in cell_types) {
+  data_3 <- data_2[data_2$variable == i,]
+  list_cell_type[[a]] <- as.vector(data_3$Gene.symbol)
+  a <- a + 1
+}
+```
+
+
+```{r}
+hallmarks_list <- list_cell_type
+write.csv(data_2,"processing/list_genes_per_cell_type")
+```
+
+## load clinical data
+```{r}
+id_file <- read.delim("data/clinical/MetaData.txt")
+id_file <- id_file[,c(1, 4)]
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical.csv")
+clinical <- clinical[,c(2, 4, 5, 39)]
+```
+
+## load data
+```{r}
+data <- read.delim("data/omics/RawReadCount.txt")
+rownames(data) <- data$Geneid
+data$Geneid <- NULL
+data <- data.frame(t(data))
+data$RNASeq <- rownames(data)
+
+data <- merge(id_file , data, by = "RNASeq")
+data$RNASeq <- NULL
+
+data <- merge(clinical, data, by = "KI_ID", all.y = TRUE)
+rownames(data) <- data$KI_ID
+```
+
+```{r}
+data_txn <- data[,-c(1:4)]
+data_txn <- t(data_txn)
+data_txn <- data_txn[apply(data_txn, 1, var) >= 0.2, ]
+data_txn <- data.frame(data_txn)
+data_txn$Gene_name <- mapIds(org.Hs.eg.db, rownames(data_txn), keytype="ENSEMBL", column="SYMBOL")
+
+data_txn <- data_txn[!is.na(data_txn$Gene_name),]
+data_txn <- data_txn[!duplicated(data_txn$Gene_name),]
+rownames(data_txn) <- data_txn$Gene_name
+data_txn$Gene_name <- NULL
+
+data_txn <- log2(data_txn)
+```
+
+```{r}
+filtered_mapped_matrix <- as.matrix(data_txn)
+```
+
+```{r}
+gsva_results <- gsva(
+  filtered_mapped_matrix,
+  hallmarks_list,
+  method = "gsva",
+  # Appropriate for our log2-transformed microarray data
+  kcdf = "Gaussian",
+  # Minimum gene set size
+  min.sz = 15,
+  # Maximum gene set size
+  max.sz = 500,
+  # Compute Gaussian-distributed scores
+  mx.diff = TRUE,
+  # Don't print out the progress bar
+  verbose = FALSE
+)
+```
+
+```{r}
+rownames(gsva_results) <- cell_types
+```
+
+```{r}
+write.csv(gsva_results, "processing/clean_data_cell_types.csv")
+```
+
+```{r}
+gsva_results <- read.csv("processing/clean_data_cell_types.csv", row.names = 1)
+gsva_results <- data.frame(t(gsva_results))
+gsva_results$X <- gsub("\\.", "-", rownames(gsva_results))
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+data <- merge(clinical, gsva_results, by = "X")
+```
+```{r}
+colnames(data)
+```
+
+## make dotplot
+```{r}
+table_1 <- data[,c(28, 3)]
+table_1$cluster <- as.vector(table_1$cluster)
+#table_1$cluster[table_1$cluster == "HC_1"] <- "HC"
+table_1$cluster <- factor(table_1$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+list_comp <- as.vector(unique(table_1[,2]))
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+comp <- comp[!grepl("Conv", comp) & !grepl("HC-Conv", comp)]
+my_comparisons <- comp
+a <- ggplot(table_1, aes(y = table_1[,1], x = table_1[,2], fill = table_1[,2]))+
+  geom_dotplot(binaxis='y', stackdir='center', alpha =0.8, dotsize = 1.5) + 
+    labs(y= paste0("",names(table_1)[1], ""), x = paste0(names(table_1)[2], ""))+ theme_classic()+
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(size=16, face = "bold",color="black"),
+          axis.text = element_text(color="black",size=16, face = "bold"),
+          axis.text.x =element_text(color="black",size=16, face = "bold"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))+scale_fill_manual(values = c(col_clusters))
+a
+ggsave(paste0("results/figures/dotplots_Neutrophils_Cybersort_numerical.pdf"), width = 4, height = 3)
+```
+
+# Create the design matrix
+
+```{r}
+group <- data$cluster
+
+des_mat <- model.matrix( ~ 0 + group)
+colnames(des_mat) <- gsub("group", "", colnames(des_mat))
+```
+
+```{r}
+# Apply linear model to data
+fit <- limma::lmFit(t(data[,-c(1:6)]), design = des_mat)
+```
+
+## main groups
+```{r}
+list_comp <- unique(as.vector(group))
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+```
+
+```{r}
+cont.matrix <- makeContrasts(G2_G1 = comp[1],
+                             G3_G1 = comp[2],
+                             G3_G2 = comp[5],
+                             G1_HC = comp[3],
+                             G2_HC = comp[6],
+                             G3_HC = comp[8],
+                             levels=des_mat)
+
+fit.cont <- contrasts.fit(fit, cont.matrix)
+fit.cont <- eBayes(fit.cont)
+```
+
+```{r}
+top_table <- data.frame(BIOCHEMICAL = NA, logFC= NA, P.Value= NA, adj.P.Val= NA, Comp= NA)
+m <- 1
+
+for (i in c(1, 2, 5, 3, 6, 8)) {
+  top_table_1 <- topTable(fit.cont, coef=m, adjust="BH", n = Inf, sort.by = "P")
+  top_table_1$Comp <- comp[i]
+  top_table_1$BIOCHEMICAL <- rownames(top_table_1)
+  top_table_1 <- top_table_1[,c(8, 1, 4, 5, 7)]
+  write.table(top_table_1$BIOCHEMICAL[top_table_1$adj.P.Val < 0.1], paste0("processing/GSEA/COVID_model_1_cell_types_clusters_", comp[i],".txt"), quote = FALSE, row.names = F)
+  top_table <- rbind(top_table, top_table_1)
+  m = m + 1
+}
+
+top_table <- top_table[complete.cases(top_table),]
+path_table <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_cell_types_with_HC_clusters.csv")
+
+print(path_table)
+write.csv(top_table, file =path_table)
+
+DF_top_table <-top_table[top_table$adj.P.Val < 0.1, ]
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_cell_types_with_HC_clusters_filt.csv")
+
+write.table(DF_top_table, file = path_results)
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_cell_types_with_HC_clusters_filt.xlsx")
+
+write.xlsx(DF_top_table, file = path_results)
+
+table(DF_top_table$Comp)
+```
+
+```{r}
+DF_top_table <- DF_top_table[!grepl("HC",DF_top_table$Comp),]
+```
+
+## boxplots
+```{r}
+clinical <- data[,colnames(data) %in% c("cluster", DF_top_table$BIOCHEMICAL)]
+```
+
+```{r}
+clinical$cluster <- factor(clinical$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+```
+
+```{r}
+my_comparisons <- list(c("LIS", "HIS"), c("LIS", "MIS"), c("HIS", "MIS"))
+```
+
+```{r}
+i_condition <- c(1)
+i_isg_scores <- c(2:6)
+
+for (i in i_condition) {
+  for (j in i_isg_scores) {
+    print(names(clinical)[i])
+    print(names(clinical)[j])
+    table_1 <- clinical[,c(j, i)]
+    a <- ggplot(table_1, aes(y = table_1[,1], x = table_1[,2], fill = table_1[,2])) + 
+      geom_boxplot(position=position_dodge(1), size = 0.1, alpha =0.8, outlier.shape = NA)+ 
+      labs(y= paste0("",names(table_1)[1], ""), x = paste0(names(table_1)[2], ""))+ theme_classic()+
+      theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0))) + 
+    geom_jitter(shape=16, size=1, color="black", position=position_jitter(0.05))+ 
+  stat_compare_means(comparisons = my_comparisons)+ scale_fill_manual(values=col_clusters)
+    ggsave(paste0("results/figures/boxplots/", names(clinical)[i],"_", names(clinical)[j],"_boxplots_GSVA_clusters.pdf"), width = 3.5, height = 2.5)
+  }
+  
+}
+```
+
+```{r}
+ifn_score <- read.csv("results/isg_scores_per_patients.csv", row.names = 1)
+rownames(ifn_score) <- gsub("\\.", "-", rownames(ifn_score))
+ifn_score$X <- rownames(ifn_score)
+```
+
+```{r}
+data_net <- read.csv("processing/clean_data_net.csv")
+data_neopterin <- read.csv("processing/clean_data_neopterin.csv")
+names(data_neopterin)[2] <- "Neopterin"
+```
+
+```{r}
+gsva_results_2 <- gsva_results[colnames(gsva_results) %in% DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "HIS-MIS"]]
+gsva_results_2$X <- rownames(gsva_results_2)
+gsva_results_2$X <- gsub("\\.", "\\-", gsva_results_2$X)
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical.csv")
+clinical <- clinical[,c(2, 39, 4, 5)]
+names(clinical)[3] <- "Age"
+names(clinical)[1] <- "X"
+```
+
+```{r}
+data <- merge(gsva_results_2, data_neopterin, by = "X")
+data <- merge(clinical, data, by = "X")
+data <- merge(data_net, data, by = "X")
+data <- merge(ifn_score, data, by = "X")
+names(data)
+data$condition <- factor(data$condition, levels = c("HC", "Conv", "Mild", "Severe"))
+```
+
+```{r}
+names(data)
+```
+
+```{r}
+clinical <- data
+
+for (cond in c(7)) {
+  for(clin in c(2:4)){
+    for (item in c(5, 6,10:15)) {
+      gfg_plot <- ggplot(clinical, aes(x = clinical[,clin], y = clinical[,item], group = clinical[,cond], color = clinical[,cond], fill = clinical[,cond])) +  geom_point(size = 3, shape = 21)+
+  geom_smooth(method = "lm", se = FALSE)+ theme_classic()+stat_cor(label.y.npc="top", label.x.npc = "left", method="pearson", size=7)+xlab(names(clinical)[clin])+ylab(names(clinical)[item])+ scale_fill_manual(values=col_conditions)+ scale_color_manual(values=col_conditions)
+      gfg_plot
+  ggsave(paste0("results/figures/scatter_plots/isg_net/COVID_IFN_", names(clinical)[item], "_vs_",names(clinical)[clin],"_", names(clinical)[cond],".pdf"), height = 5, width = 7)
+    }
+  }
+}
+```
+
+```{r}
+gfg_plot <- ggplot(data, aes(x = Monocytes, y = Neopterin, group = condition, color = condition, fill = condition)) +  geom_point(size = 3, shape = 21)+
+  geom_smooth(method = "lm", se = FALSE)+ theme_classic()+stat_cor(label.y.npc="top", label.x.npc = "left", method="pearson", size=7)+xlab("Monocyte marker (GSVA)")+ scale_fill_manual(values=col_conditions)+ scale_color_manual(values=col_conditions)
+gfg_plot
+ggsave(paste0("results/figures/COVID_IFN_Monocytes_GSVA_Neopterin.pdf"), height = 5, width = 7)
+```
+
+```{r}
+gfg_plot <- ggplot(data, aes(x = Neutrophils, y = S100A8.A9..ng.ml., group = condition, color = condition, fill = condition)) +  geom_point(size = 3, shape = 21)+
+  geom_smooth(method = "lm", se = FALSE)+ theme_classic()+stat_cor(label.y.npc="top", label.x.npc = "left", method="pearson", size=7)+xlab("Neutrophils marker (GSVA)")+ scale_fill_manual(values=col_conditions)+ scale_color_manual(values=col_conditions)
+gfg_plot
+ggsave(paste0("results/figures/COVID_IFN_Neutrophils_GSVA_S100A8.pdf"), height = 5, width = 7)
+```
+
+```{r}
+gfg_plot <- ggplot(data, aes(x = Neutrophils, y = MPO.DNA.complexes....control., group = condition, color = condition, fill = condition))+  geom_point(size = 3, shape = 21)+
+  geom_smooth(method = "lm", se = FALSE)+ theme_classic()+stat_cor(label.y.npc="top", label.x.npc = "left", method="pearson", size=7)+xlab("Neutrophils marker (GSVA)")+ scale_fill_manual(values=col_conditions)+ scale_color_manual(values=col_conditions)
+gfg_plot
+ggsave(paste0("results/figures/COVID_IFN_Neutrophils_GSVA_MPO.pdf"), height = 5, width = 7)
+```
+

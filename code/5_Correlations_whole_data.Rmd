@@ -1,0 +1,138 @@
+---
+title: "Correlations_whole_data"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+
+```{r}
+library(Hmisc)
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv", row.names = 1)
+```
+
+```{r}
+data_met <- read.csv("processing/clean_data_met.csv", row.names = 1, check.names = FALSE)
+data_auto <- read.csv("processing/clean_data_auto.csv", row.names = 1)
+data_net <- read.csv("processing/clean_data_net.csv", row.names = 1)
+data_neopterin <- read.csv("processing/clean_data_neopterin.csv", row.names = 1)
+data_mfi <- read.csv("processing/clean_data_mfi.csv", row.names = 1)
+clinical<- read.csv("processing/clean_data_clinical_new_clusters.csv", row.names = 1)
+data_celltype <- read.csv("processing/clean_data_cell_types.csv", row.names = 1)
+data_celltype <- data.frame(t(data_celltype))
+rownames(data_celltype) <- gsub("\\.", "-", rownames(data_celltype))
+ifn_score <- read.csv("results/isg_scores_per_patients.csv", row.names = 1)
+rownames(ifn_score) <- gsub("\\.", "-", rownames(ifn_score))
+```
+
+## Correlation
+```{r}
+conditions <- c(unique(c(as.vector(clinical$condition), as.vector(clinical$cluster))),"COVID")
+```
+
+```{r}
+data_list <- list(data_met,
+                  data_neopterin,
+                  data_net,
+                  data_mfi,
+                  ifn_score,
+                  data_auto, 
+                  data_celltype)
+```
+
+```{r}
+data_names <- c("met", "neopterin", "net", "ifn_mfi", "ifn_score", "autoantibodies", "cell_type")
+```
+
+```{r}
+
+```
+
+```{r}
+data_names_2 <-  data.frame(t(combn(data_names,2)))
+data_names_2 <- data_names_2[data_names_2$X1 == "ifn_score" | data_names_2$X2 == "ifn_score",]
+```
+
+```{r}
+flat_cor_mat <- function(cor_r, cor_p){
+  #This function provides a simple formatting of a correlation matrix
+  #into a table with 4 columns containing :
+    # Column 1 : row names (variable 1 for the correlation test)
+    # Column 2 : column names (variable 2 for the correlation test)
+    # Column 3 : the correlation coefficients
+    # Column 4 : the p-values of the correlations
+  library(tidyr)
+  library(tibble)
+  cor_r <- rownames_to_column(as.data.frame(cor_r), var = "row")
+  cor_r <- gather(cor_r, column, cor, -1)
+  cor_p <- rownames_to_column(as.data.frame(cor_p), var = "row")
+  cor_p <- gather(cor_p, column, p, -1)
+  cor_p_matrix <- left_join(cor_r, cor_p, by = c("row", "column"))
+  cor_p_matrix
+}
+```
+
+```{r}
+clinical$condition <- as.vector(clinical$condition)
+clinical$condition <- ifelse(clinical$condition %in% c("Mild", "Severe"), paste0("COVID_", clinical$condition), clinical$condition)
+clinical$condition <- as.factor(clinical$condition)
+```
+
+```{r}
+for (i in 1:nrow(data_names_2)) {
+  x <- as.vector(data_names_2[i, 1])
+  y <- as.vector(data_names_2[i, 2])
+  print(c(x, y))
+  
+  dir.create(paste0("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/", x, "_", y))
+  data_1 <- data_list[[which(data_names == x)]]
+  data_1$X <- rownames(data_1)
+  data_2 <- data_list[[which(data_names == y)]]
+  data_2$X <- rownames(data_2)
+  
+  list_out_1 <- data_1$X[!data_1$X %in% data_2$X]
+  path <- paste0("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/", x, "_", y, "/samples_out_", x, ".csv")
+  write.csv(list_out_1, path)
+    
+  list_out_2  <- data_2$X[!data_2$X %in% data_1$X]
+  path <- paste0("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/", x, "_", y, "/samples_out_", y, ".csv")
+  write.csv(list_out_2, path)
+  
+  data <- merge(data_1, data_2, by = "X")
+  data <- merge(clinical, data, by = "X")
+  data$condition <- paste0(data$cluster, "_", data$condition)
+  
+  for (j in conditions) {
+    print(j)
+    data_3 <- data[grep(j, data$condition), ]
+    cor_3 <- rcorr(as.matrix(data_3[,-c(1:5)]), type = "spearman")
+    cor_3$r[upper.tri(cor_3$r)] <- NA
+    my_cor_matrix <- flat_cor_mat(cor_3$r, cor_3$P)
+    my_cor_matrix$padj <- p.adjust(my_cor_matrix$p, method = "fdr")
+    my_cor_matrix$cor <- ifelse(abs(my_cor_matrix$cor) < 0.3, NA, my_cor_matrix$cor)
+    my_cor_matrix$cor <- ifelse(my_cor_matrix$padj > 0.05, NA, my_cor_matrix$cor)
+    my_cor_matrix$type_1 <- ifelse(my_cor_matrix$row %in% colnames(data_1), x, y)
+    my_cor_matrix$type_2 <- ifelse(my_cor_matrix$column %in% colnames(data_1), x, y)
+    my_cor_matrix <- my_cor_matrix[complete.cases(my_cor_matrix), ]
+    names(my_cor_matrix) <- c("feat1", "feat2", "R", "p", "Padj", "type_feat1", "type_feat2")
+    path <- paste0("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/", x, "_", y, "/correlations_all_features_", x, "_", y, "_", j , ".csv")
+    write.csv(my_cor_matrix, path)
+    my_cor_matrix <- my_cor_matrix[my_cor_matrix$type_feat1 != my_cor_matrix$type_feat2,]
+    path <- paste0("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/results/correlations/all_data_correlations/", x, "_", y, "/correlations_all_features_", x, "_", y, "_", j , "_only_correlations_between_data.csv")
+    write.csv(my_cor_matrix, path)
+  }
+}
+```

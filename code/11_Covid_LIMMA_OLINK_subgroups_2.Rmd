@@ -1,0 +1,281 @@
+---
+title: "olink analysis"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(piano)
+library(ggrepel)
+library(scales)
+```
+
+
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#c8ddc8","#489048","#bdcbde","#7b98bd", "#debfbd","#bd7f7b")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical$X.1 <- NULL
+clinical$V2 <- NULL
+clinical$Age <- NULL
+clinical$BMI <- NULL
+```
+
+### olink
+```{r}
+data <- read.csv("processing/clean_data_olink.csv")
+names(data)[1] <- "X"
+pca_data <- merge(clinical, data, by = "X")
+```
+
+```{r}
+pca_data$cluster <- factor(pca_data$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+```
+
+```{r}
+pca_data$cluster <- paste0(pca_data$condition, "_", pca_data$cluster)
+```
+
+```{r}
+pca_data$cluster[pca_data$cluster == "Conv_Conv"] <- "Conv"
+pca_data$cluster[pca_data$cluster == "HC_HC"] <- "HC"
+```
+
+```{r}
+pca_data$cluster <- factor(pca_data$cluster, levels = c("HC", "Conv", "Mild_LIS", "Severe_LIS", "Mild_HIS", "Severe_HIS", "Mild_MIS", "Severe_MIS"))
+```
+
+```{r}
+names(pca_data)
+```
+
+```{r}
+pca_data[is.na(pca_data)] <-  0
+pca <- prcomp(pca_data[,-c(1:4)])
+df_out <- as.data.frame(pca$x)
+df_out$group <- as.factor(pca_data$cluster)
+```
+
+```{r}
+x <- project.pca.proportionvariances <- ((pca$sdev^2) / (sum(pca$sdev^2)))*100
+a1 <- x[1]
+a2 <- x[2]
+```
+
+
+```{r}
+gg <- data.frame(cluster=factor(df_out$group), x=df_out$PC1, y=df_out$PC2)
+centroids <- aggregate(cbind(x,y)~cluster,data=gg,mean)
+gg <- merge(gg,centroids,by="cluster",suffixes=c("",".centroid"))
+
+ggplot(gg)+
+  geom_point(aes(x=x,y=y,color=cluster, fill = cluster), size=3)+
+  stat_ellipse(geom = "polygon", aes(x=x,y=y,color=cluster, fill = cluster), alpha = 0.3) +
+  geom_point(data=centroids, aes(x=x, y=y, color=cluster, fill = cluster), size = 5, alpha = 0.9, shape = 19)+ 
+  geom_segment(aes(x=x.centroid, y=y.centroid, xend=x, yend=y, color=cluster))+
+  theme(legend.title=element_text(size=15),legend.text=element_text(size=12),
+        legend.key.size=unit(0.7,"line"),plot.title = element_text(hjust = 0.5),
+        axis.title.y=element_text(size=15),axis.title.x=element_text(size=15),
+        axis.text.y=element_text(size=18),axis.text.x=element_text(size=18))+ scale_color_manual(values=col_clusters)+ scale_fill_manual(values=col_clusters)+
+  xlab(paste0("PC1: ",round(a1,0),"% variance"))+
+  ylab(paste0("PC2: ",round(a2,0),"% variance"))+ theme_classic()+
+    theme(axis.title.x = element_text(color="black"),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))
+ggsave("results/figures/PCA_new_clusters_olink_subgroups.pdf", height = 6, width = 7)
+```
+
+
+```{r}
+group <- as.vector(pca_data$cluster)
+group <- as.factor(group)
+#bmi <- pca_data$BMI
+design <- model.matrix( ~ 0 + group)
+colnames(design) <- gsub("group", "", colnames(design))
+```
+
+```{r}
+names(pca_data)
+```
+
+```{r}
+fit <- lmFit(t(pca_data[,-c(1:4)]), design)
+```
+
+```{r}
+list_comp <- unique(as.vector(group))
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+```
+
+```{r}
+cont.matrix <- makeContrasts(C1 = comp[grepl("Mild_LIS-Severe_LIS", comp)],
+                             C2 = comp[grepl("Mild_HIS-Severe_HIS", comp)],
+                             C3 = comp[grepl("Mild_MIS-Severe_MIS", comp)],
+                             levels=design)
+
+fit.cont <- contrasts.fit(fit, cont.matrix)
+fit.cont <- eBayes(fit.cont)
+```
+
+```{r}
+colnames(cont.matrix)
+```
+
+```{r}
+x <- which(comp %in% colnames(cont.matrix) == TRUE)
+
+comp[x]
+```
+
+
+```{r}
+top_table <- data.frame(BIOCHEMICAL = NA, logFC= NA, P.Value= NA, adj.P.Val= NA, Comp= NA)
+j = 1
+
+
+for (i in x) {
+  top_table_1 <- topTable(fit.cont, coef=j, adjust="BH", n = Inf, sort.by = "P")
+  top_table_1$Comp <- comp[i]
+  top_table_1$BIOCHEMICAL <- rownames(top_table_1)
+  top_table_1 <- top_table_1[,c(8, 1, 4, 5, 7)]
+  #write.table(top_table_1$BIOCHEMICAL[top_table_1$adj.P.Val < 0.1], paste0("processing/GSEA/COVID_model_1_olink_subgroups_", comp[i],".txt"), quote = FALSE, row.names = F)
+  top_table <- rbind(top_table, top_table_1)
+  j = j + 1
+}
+
+top_table <- top_table[complete.cases(top_table),]
+path_table <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC_subgroups.csv")
+
+print(path_table)
+write.csv(top_table, file =path_table)
+
+DF_top_table <-top_table[top_table$adj.P.Val < 0.1, ]
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC_subgroups_filt.csv")
+
+write.table(DF_top_table, file = path_results)
+
+path_results <- paste0("results/LIMMA/COVID_model_1_LIMMA_results_olink_with_HC_subgroups_filt.xlsx")
+
+write.xlsx(DF_top_table, file = path_results)
+
+table(DF_top_table$Comp)
+```
+## boxplots
+```{r}
+list_prot <- DF_top_table$BIOCHEMICAL[DF_top_table$Comp == "Mild_HIS-Severe_HIS"]
+```
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#a07bbd","#7b98bd", "#bd7f7b")
+```
+
+```{r}
+clinical$cluster <- factor(clinical$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+```
+
+
+
+
+
+```{r}
+my_comparisons <- list(c("Mild_HIS", "Severe_HIS"))
+```
+
+```{r}
+pca_data$cluster <- factor(pca_data$cluster, levels = c("HC", "Conv", "Mild_LIS", "Severe_LIS", "Mild_HIS", "Severe_HIS", "Mild_MIS", "Severe_MIS"))
+```
+
+```{r}
+pca_data <- pca_data[!pca_data$cluster %in% c("Mild_LIS", "Severe_LIS", "Mild_MIS", "Severe_MIS"),]
+```
+
+```{r}
+table(pca_data$cluster)
+```
+
+```{r}
+clinical <- pca_data
+x <- which(colnames(pca_data) %in% list_prot)
+```
+
+
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#d9cae4","#a07bbd","#bdcbde","#7b98bd", "#debfbd","#bd7f7b")
+col_clusters <- c("#FFA500","#A0A0A4","#bdcbde","#7b98bd")
+```
+
+
+    
+```{r}
+i_condition <- c(2)
+i_isg_scores <- x
+
+for (i in i_condition) {
+  for (j in i_isg_scores) {
+    print(names(clinical)[i])
+    print(names(clinical)[j])
+    table_1 <- clinical[,c(j, i)]
+    #my_comparisons <- comp
+    a <- ggplot(table_1, aes(y = table_1[,1], x = table_1[,2], fill = table_1[,2])) + 
+      geom_boxplot(position=position_dodge(1), size = 0.1, alpha =0.8, outlier.shape = NA)+ 
+      labs(y= paste0("IFN ",names(table_1)[1], ""), x = paste0(names(table_1)[2], ""))+ theme_classic()+
+      theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(color="black"),
+          axis.text = element_text(color="black"),
+          axis.text.x =element_text(color="black"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+            legend.background=element_rect(fill = alpha("white", 0))) + 
+      geom_jitter(shape=16, size=1, color="black", position=position_jitter(0.05))+ 
+    stat_compare_means(comparisons = my_comparisons)+ scale_fill_manual(values=col_clusters)
+    ggsave(paste0("results/figures/boxplots/", names(clinical)[i],"_", names(clinical)[j],"_olink_sub_boxplots.pdf"), width = 3.5, height = 2.5)
+  }
+}
+```

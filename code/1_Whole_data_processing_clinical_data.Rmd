@@ -1,0 +1,63 @@
+---
+title: "Correlations covid"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+```{r}
+dir.create("results/clustering")
+dir.create("results/Deseq2")
+dir.create("results/piano")
+dir.create("results/LIMMA")
+dir.create("results/figures")
+dir.create("results/figures/boxplots")
+dir.create("processing/GSEA")
+dir.create("results/figures/dotplots")
+dir.create("results/figures/volcano_plots")
+dir.create("results/figures/scatter_plots")
+dir.create("results/figures/scatter_plots/isg_net")
+dir.create("results/correlations")
+dir.create("results/correlations/all_data_correlations")
+```
+
+### load packages
+```{r}
+library(xlsx)
+```
+
+```{r}
+id_file <- read.delim("data/clinical/MetaData.txt")
+id_file$X.2 <- NULL
+id_file$X.1 <- NULL
+id_file$X.5 <- NULL
+id_file$X.6 <- NULL
+id_file$condition <- id_file$Group
+```
+
+## load clinical
+```{r}
+clinical <- read.xlsx("data/clinical/ClinicalData.xlsx", 1)
+id_clinical <- id_file[,c(4, 8)]
+names(id_clinical)[2] <- "ID"
+clinical <- merge(id_clinical, clinical, by = "ID")
+clinical$condition <- gsub(".*\\_", "",clinical$ID)
+
+id_clinical$KI_ID[!id_clinical$ID %in% clinical$ID]
+
+clinical$ID <- NULL
+```
+```{r}
+write.csv(clinical, "processing/clean_data_clinical.csv")
+```
+
+

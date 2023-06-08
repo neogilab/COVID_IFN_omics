@@ -1,0 +1,148 @@
+---
+title: "Autoantibodies"
+output: html_notebook
+---
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+### load packages
+```{r}
+library(DESeq2)
+library(dplyr)
+library(SNFtool)
+library(xlsx)
+library(ggplot2)
+library(corrr)
+library(mygene)
+library(edgeR)
+library(piano)
+library(ggrepel)
+library(scales)
+```
+
+
+```{r}
+col_clusters <- c("#FFA500","#A0A0A4","#489048","#bd7f7b","#7b98bd")
+```
+
+```{r}
+col_conditions <- c("#FFA500","#A0A0A4","#7F7BBD","#C05A12")
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+```
+
+## load clinical
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical$X.1 <- NULL
+names(clinical)[1] <- "KI_ID"
+```
+
+## Autoantibodies
+```{r}
+data <- read.csv("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/processing/clean_data_auto.csv")
+names(data)[1] <- "KI_ID"
+data$KI_ID <- gsub(".*COVID19\\_", "", data$KI_ID)
+```
+
+### autoantibodies
+```{r}
+pca_data <- merge(clinical, data, by = "KI_ID")
+pca_data <- pca_data[pca_data$condition != "",]
+```
+
+```{r}
+table_mean <- aggregate(. ~ cluster, data=pca_data[,-c(1, 3:5)], mean)
+table_sd <- aggregate(. ~ cluster, data=pca_data[,-c(1, 3:5)], sd)
+
+autoantibodies <- colnames(table_mean)
+mean_HC <- as.vector(table_mean[2,-1])
+mean_HC <- as.vector(t(mean_HC))
+sd_HC <- table_sd[2,-1]
+sd_HC <- as.vector(t(sd_HC))
+
+table_auto <- data.frame(auto = autoantibodies[-1], mean_7SD = mean_HC+7*sd_HC)
+rownames(pca_data) <- pca_data$KI_ID
+data_auto <- data.frame(t(pca_data[,-c(1:5)]))
+data_auto$auto <- rownames(data_auto)
+data_auto <- merge(table_auto, data_auto, by = "auto")
+
+table_auto$Nb <- 0
+
+for (i in 3:ncol(data_auto)) {
+  for (j in 1:nrow(data_auto)) {
+    if(data_auto[j, i] > data_auto[j,2]){
+      table_auto[grepl(data_auto$auto[j], table_auto$auto),3] <- table_auto[grepl(data_auto$auto[j], table_auto$auto),3] + 1
+    }else{
+      data_auto[j, i] <- NA
+    }
+  }
+}
+
+write.xlsx(table_auto,"manuscript/patients_autoantibodies_above_7SD.xlsx") 
+
+table_auto <- table_auto[table_auto$Nb > 0,]
+```
+
+
+```{r}
+my_comparisons <- list(c("LIS", "HIS"), c("LIS", "MIS"), c("HIS", "MIS"))
+```
+
+## dotplots with line
+```{r}
+pca_data_2 <- pca_data[,colnames(pca_data) %in% c("cluster", as.vector(table_auto$auto))]
+pca_data_2$cluster <- factor(pca_data_2$cluster, levels = c("HC", "Conv", "LIS", "MIS", "HIS"))
+table_auto_2 <- data.frame(t(matrix(c(4,table_auto$mean_7SD))))
+colnames(table_auto_2) <- colnames(pca_data_2)
+
+clinical <- pca_data_2
+i_condition <- c(1)
+i_isg_scores <- 2:ncol(pca_data_2)
+
+for (i in i_condition) {
+  for (j in i_isg_scores) {
+    print(names(clinical)[i])
+    print(names(clinical)[j])
+    table_1 <- clinical[,c(j, i)]
+    a <- ggplot(table_1, aes(y = log10(table_1[,1]), x = table_1[,2], fill = table_1[,2]))+
+  geom_dotplot(binaxis='y', stackdir='center', alpha =0.8, dotsize = 1.5) + 
+    labs(y= paste0("log10(",names(table_1)[1], ")"), x = paste0(names(table_1)[2], ""))+ theme_classic()+
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_text(size=16, face = "bold",color="black"),
+          axis.text = element_text(color="black",size=16, face = "bold"),
+          axis.text.x =element_text(color="black",size=16, face = "bold"),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 9,color="black"),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+          plot.title = element_text(hjust = 0.5, size = 20, face = "bold", vjust=2),
+          legend.background=element_rect(fill = alpha("white", 0)))+scale_fill_manual(values = col_clusters)+ geom_hline(yintercept=log10(table_auto_2[1,grepl(names(clinical)[j], colnames(table_auto_2))]), linetype="dashed", color = "black")
+    
+    ggsave(paste0("results/figures/dotplots/", names(clinical)[i],"_", names(clinical)[j],"_dotplots_autoantibodies_7SD.pdf"), width = 4, height = 3)
+  }
+  
+}
+```
+
+## distribution
+```{r}
+pdf("results/figures/distribution_autoantibodies.pdf")
+data_2 <-as.matrix(data[,-1])
+hist(data_2 , prob=T)
+curve(dnorm(x,mean(data_2),sd(data_2)),add=T,col="red")
+dev.off()
+```
+

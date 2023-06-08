@@ -1,0 +1,34 @@
+---
+title: "Data NET and neopterine"
+output: html_notebook
+---
+
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/")) 
+```
+
+```{r}
+library(xlsx)
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+net <- read.csv("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/processing/clean_data_net.csv")
+net <- merge(clinical, net, by = "X")
+neop <- read.csv("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/processing/clean_data_neopterin.csv")
+neop <- merge(clinical, neop, by = "X")
+```
+
+```{r}
+write.xlsx(net, "processing/soham_net_with_clusters.xlsx")
+write.xlsx(neop, "processing/soham_neopterin_with_clusters.xlsx")
+```
+

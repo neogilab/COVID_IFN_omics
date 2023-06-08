@@ -1,0 +1,80 @@
+---
+title: "Gmt files"
+output: html_notebook
+---
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+```{r}
+data <- read.delim("data/omics/Metabolome.txt",sep = "_")
+data <- data[,c(1,2)]
+names(data) <- c("BIOCHEMICAL", "SUPER.PATHWAY")
+```
+
+
+## metabolome
+```{r}
+met <- data
+met <- met[met$SUPER.PATHWAY != "",]
+write.csv(met, "processing/metabolomics_pathways.csv")
+```
+
+### create gmt file
+```{r}
+sink("processing/Metabolon_met_1.gmt")
+
+pathway.compounds = unique(met$SUPER.PATHWAY)
+
+for (i in pathway.compounds){
+  list_met <- met[met$SUPER.PATHWAY == i,]
+  list_met <- list_met$BIOCHEMICAL
+  cat(sprintf("%s\t\t%s", tolower(i), paste(list_met, collapse="\t")), "\n")
+}
+
+sink()
+```
+
+### create gmt file
+```{r}
+sink("processing/Metabolon_met_2.gmt")
+
+pathway.compounds = unique(met$SUPER.PATHWAY)
+
+for (i in pathway.compounds){
+  list_met <- met[met$SUPER.PATHWAY == i,]
+  list_met <- list_met$BIOCHEMICAL
+  cat(sprintf("%s\t\t%s", tolower(i), paste(list_met, collapse="\t")), "\n")
+}
+
+subpathway.compounds = unique(met$SUB.PATHWAY)
+
+for(j in subpathway.compounds){
+  sub_list_met <- met[met$SUB.PATHWAY == j,]
+  sub_list_met <- sub_list_met$BIOCHEMICAL
+  cat(sprintf("%s\t\t%s", tolower(j), paste(sub_list_met, collapse=" ")), "\n")
+}
+
+sink()
+```
+
+```{r}
+sink("processing/Metabolon_met_3.gmt")
+
+subpathway.compounds = unique(met$SUB.PATHWAY)
+
+for(j in subpathway.compounds){
+  sub_list_met <- met[met$SUB.PATHWAY == j,]
+  sub_list_met <- sub_list_met$BIOCHEMICAL
+  cat(sprintf("%s\t\t%s", tolower(j), paste(sub_list_met, collapse=" ")), "\n")
+}
+
+sink()
+```

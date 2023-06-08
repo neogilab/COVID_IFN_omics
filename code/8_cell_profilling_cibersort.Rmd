@@ -1,0 +1,229 @@
+---
+title: "Figures transcriptomics"
+output: html_notebook
+---
+
+
+### clean environment
+```{r}
+rm(list=ls())
+```
+
+### set directory
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath("~/Desktop/Code-PHD/IFN_Covid_multiomics/"))  
+```
+
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+fractions <- read.delim("/home/flomik/Desktop/Code-PHD/IFN_Covid_multiomics/data/cibersort/CIBERSORTx_Job1_Results.txt")
+fractions <- fractions[-1,-c(24:26)]
+rownames(fractions) <- fractions$Mixture
+fractions$Mixture <- NULL
+fractions <- data.frame(condition = gsub(".*_", "", rownames(fractions)), fractions)
+```
+
+
+```{r}
+fractions_2 <- aggregate(. ~ condition, data=fractions, FUN=mean)
+```
+
+```{r}
+library(reshape2)
+fractions_3 <- melt(fractions_2)
+```
+
+```{r}
+phylum_colors <- c("#5F7FC7","#DA5724", "#508578", "#CD9BCD",
+   "#AD6F3B", "#673770","#D14285", "#652926", "#C84248", 
+  "#8569D5", "orange", "#CBD588", "#edf2ef", "#5E738F","#D1A33D", "#8A7C64")
+```
+
+
+```{r}
+phylum_colors <- rev(phylum_colors)
+```
+
+```{r}
+data_factor <- fractions
+```
+
+```{r}
+data_factor$condition
+```
+
+
+
+```{r}
+sum(fractions_2[1,-1])
+```
+
+```{r}
+table_fraction <- data.frame(Var1 = NA, Var2 = NA, value = NA, Cell_line = NA)
+
+for (i in 2:ncol(fractions)) {
+  data_1 <- fractions[,c(1, i)]
+  x <- pairwise.wilcox.test(data_1[,2], data_1$condition, p.adj = "fdr")
+  x2 <- melt(x[[3]])
+  x2$Cell_line <- colnames(data_1)[2]
+  table_fraction_2 <- x2
+  table_fraction <- rbind(table_fraction_2, table_fraction)
+}
+
+table_fraction <- table_fraction[complete.cases(table_fraction),]
+table_fraction$Comp <- paste0(table_fraction$Var1, "_", table_fraction$Var2)
+table_fraction$Var1 <- NULL
+table_fraction$Var2 <- NULL
+table_fraction_2 <- dcast(table_fraction, Comp ~ Cell_line)
+write.csv(table_fraction_2, "results/CIBERSORT_differences_proportions_conditions.csv")
+rownames(table_fraction_2) <- table_fraction_2$Comp
+table_fraction_2$Comp <- NULL
+table_fraction_2[table_fraction_2 > 0.1] <- NA
+write.csv(table_fraction_2, "results/CIBERSORT_differences_proportions_conditions_filt.csv")
+```
+
+```{r}
+fractions_3$condition <- factor(fractions_3$condition, levels = c("HC", "Conv","Mild", "Severe"))
+```
+
+
+## mean barplot by condition
+```{r}
+m1 <- ggplot(fractions_3, aes(fill=variable, y=value, x=condition)) + 
+    geom_bar(position="fill", stat="identity", alpha= 0.6)+ylab("")+ theme_void()+ 
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text = element_blank(),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 7,color="black"),
+          legend.position="bottom",
+          axis.text.x = element_text(size = 7,color="black")
+          )+
+  theme(legend.position = "right")+scale_fill_manual(values = c(phylum_colors, "red", "blue", "green", "pink", "grey","black")) + geom_text(aes(label=ifelse(value >= 0.10, paste0(round(value*100, 0), "%"),"")), position=position_stack(vjust=0.5), colour="black")
+
+m1
+
+ggsave("results/figures/CIBERSORT_proportions_conditions.pdf", height = 6, width = 10)
+```
+
+```{r}
+fractions_4 <- fractions_3[fractions_3$value > 0,]
+
+m1 <- ggplot(fractions_4, aes(y=variable, x=condition, size = value, col = value))+geom_point()+
+  scale_size_continuous(range = c(2,6))+
+   scale_colour_gradient(low = "yellow", high = "red", na.value = NA)+theme_classic()
+m1
+ggsave("results/figures/proportions_cell_types_bulk_covid.pdf")
+```
+
+```{r}
+id_file <- read.delim("data/clinical/MetaData.txt")
+id_file$X.2 <- NULL
+id_file$X.1 <- NULL
+id_file$X.5 <- NULL
+id_file$X.6 <- NULL
+id_file$condition <- id_file$Group
+```
+
+```{r}
+clinical <- read.csv("processing/clean_data_clinical_new_clusters.csv")
+clinical <- clinical[,c(2, 3)]
+names(clinical)[1] <- "X.3"
+clinical <- merge(id_file, clinical, by = "X.3")
+```
+
+```{r}
+fractions$X.4 <- rownames(fractions)
+fractions_2 <- merge(clinical, fractions, by = "X.4")
+fractions_2 <- fractions_2[,-c(1:9, 11)]
+fractions <- fractions_2
+```
+
+
+```{r}
+fractions_bis <- fractions
+fractions_2 <- aggregate(. ~ cluster, data=fractions_bis, FUN=mean)
+```
+
+```{r}
+library(reshape2)
+fractions_3 <- melt(fractions_2)
+names(fractions_3)[1] <- "condition"
+fractions_3$condition <- as.vector(fractions_3$condition)
+fractions_3$condition <- gsub("hosp_", "", fractions_3$condition)
+fractions_3$condition <- factor(fractions_3$condition, levels = c("HC", "Conv", "LIS", "HIS", "MIS"))
+```
+
+```{r}
+fractions_3$variable <- as.vector(fractions_3$variable)
+fractions_3$variable[fractions_3$value < 0.05] <- "Others"
+fractions_3$variable <- factor(fractions_3$variable, levels = unique(fractions_3$variable[fractions_3$variable != "Others"], "Others"))
+```
+
+## mean barplot by cluster
+```{r}
+m1 <- ggplot(fractions_3, aes(fill=variable, y=value, x=condition)) + 
+    geom_bar(position="fill", stat="identity", alpha= 0.6)+ylab("")+ theme_void()+ 
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text = element_blank(),
+          panel.border = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.x = element_text(size = 7,color="black"),
+          legend.position="bottom",
+          axis.text.x = element_text(size = 7,color="black")
+          )+
+  theme(legend.position = "right")+scale_fill_manual(values = c(phylum_colors, "red", "blue", "green", "pink", "grey","black")) + geom_text(aes(label=ifelse(value >= 0.10, paste0(round(value, 2), ""),"")), position=position_stack(vjust=0.5), colour="black")
+
+m1
+
+ggsave("results/figures/CIBERSORT_proportions_clusters.pdf", height = 3, width = 6)
+```
+
+```{r}
+fractions_4 <- fractions_3[fractions_3$value > 0,]
+
+m1 <- ggplot(fractions_4, aes(y=variable, x=condition, size = value, col = value))+geom_point()+
+  scale_size_continuous(range = c(2,6))+
+   scale_colour_gradient(low = "yellow", high = "red", na.value = NA)+theme_classic()
+m1
+ggsave("results/figures/proportions_cell_types_bulk_clusters.pdf")
+```
+
+```{r}
+data <- fractions
+list_comp <- unique(data$cluster)
+list_pair <- data.frame(t(combn(list_comp,2)))
+list_pair$comp <- paste0(list_pair$X1, "-", list_pair$X2)
+comp <- list_pair$comp
+```
+
+```{r}
+table_fraction <- data.frame(Var1 = NA, Var2 = NA, value = NA, Cell_line = NA)
+
+for (i in 2:ncol(data)) {
+  data_1 <- data[,c(1, i)]
+  x <- pairwise.wilcox.test(data_1[,2], data_1$cluster, p.adj = "fdr")
+  x2 <- melt(x[[3]])
+  x2$Cell_line <- colnames(data_1)[2]
+  table_fraction_2 <- x2
+  table_fraction <- rbind(table_fraction_2, table_fraction)
+}
+
+table_fraction <- table_fraction[complete.cases(table_fraction),]
+table_fraction$Comp <- paste0(table_fraction$Var1, "_", table_fraction$Var2)
+table_fraction$Var1 <- NULL
+table_fraction$Var2 <- NULL
+table_fraction_2 <- dcast(table_fraction, Comp ~ Cell_line)
+write.csv(table_fraction_2, "results/CIBERSORT_differences_proportions_clusters.csv")
+rownames(table_fraction_2) <- table_fraction_2$Comp
+table_fraction_2$Comp <- NULL
+table_fraction_2[table_fraction_2 > 0.1] <- NA
+write.csv(table_fraction_2, "results/CIBERSORT_differences_proportions_clusters_filt.csv")
+```
+
